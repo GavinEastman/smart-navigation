@@ -951,6 +951,90 @@ async function startRoute() {
   }
 }
 
+// ---------- Press-and-hold to drag stops up/down the list ----------
+// Hold a stop ~0.4 s (finger or mouse), then move it. "Move → position" in the stop sheet still works too.
+const DRAG = { timer: null, active: false, li: null, ghost: null, startY: 0, offsetY: 0, pointerId: null, justDropped: false, scrollT: null };
+
+function dragCancelPending() { clearTimeout(DRAG.timer); DRAG.timer = null; }
+
+function initStopDrag() {
+  const list = $('stopList');
+  list.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (S.route && S.route.completed_at) return;              // saved routes are view-only
+    const li = e.target.closest('li.stop');
+    if (!li || e.target.closest('a,button,input')) return;
+    DRAG.startY = e.clientY; DRAG.startX = e.clientX; DRAG.pointerId = e.pointerId;
+    dragCancelPending();
+    DRAG.timer = setTimeout(() => dragStart(li, e.clientY), 400);
+  });
+  // moving before the hold finishes = normal scrolling, not a drag
+  document.addEventListener('pointermove', (e) => {
+    if (DRAG.timer && (Math.abs(e.clientY - DRAG.startY) > 8 || Math.abs(e.clientX - DRAG.startX) > 8)) dragCancelPending();
+    if (DRAG.active && e.pointerId === DRAG.pointerId) { e.preventDefault(); dragMove(e.clientY); }
+  }, { passive: false });
+  const end = (e) => { dragCancelPending(); if (DRAG.active && (!e || e.pointerId === DRAG.pointerId)) dragEnd(); };
+  document.addEventListener('pointerup', end);
+  document.addEventListener('pointercancel', end);
+  // stop the page from scrolling while a stop is being dragged (phones)
+  document.addEventListener('touchmove', (e) => { if (DRAG.active || DRAG.timer) { if (DRAG.active) e.preventDefault(); } }, { passive: false });
+  list.addEventListener('contextmenu', (e) => { if (e.target.closest('li.stop')) e.preventDefault(); });
+}
+
+function dragStart(li, y) {
+  DRAG.timer = null; DRAG.active = true; DRAG.li = li;
+  const r = li.getBoundingClientRect();
+  DRAG.offsetY = y - r.top;
+  const ghost = li.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.style.width = r.width + 'px'; ghost.style.left = r.left + 'px'; ghost.style.top = r.top + 'px';
+  document.body.appendChild(ghost);
+  DRAG.ghost = ghost;
+  li.classList.add('drag-placeholder');
+  li.style.height = r.height + 'px';
+  document.body.classList.add('dragging');
+  try { navigator.vibrate && navigator.vibrate(15); } catch (e) { /* */ }
+}
+
+function dragMove(y) {
+  DRAG.ghost.style.top = (y - DRAG.offsetY) + 'px';
+  // where should the placeholder go?
+  const list = $('stopList');
+  const items = [...list.children].filter((x) => x !== DRAG.li);
+  let before = null;
+  for (const it of items) {
+    const r = it.getBoundingClientRect();
+    if (y < r.top + r.height / 2) { before = it; break; }
+  }
+  if (before) { if (DRAG.li.nextSibling !== before) list.insertBefore(DRAG.li, before); }
+  else if (list.lastElementChild !== DRAG.li) list.appendChild(DRAG.li);
+  // auto-scroll near the screen edges
+  clearInterval(DRAG.scrollT);
+  const edge = 70, vh = window.innerHeight;
+  const moved = Math.abs(y - DRAG.startY) > 24; // don't scroll the moment a stop near the edge is picked up
+  const dir = !moved ? 0 : y < edge ? -1 : y > vh - edge ? 1 : 0;
+  if (dir) DRAG.scrollT = setInterval(() => { window.scrollBy(0, dir * 12); }, 16);
+}
+
+async function dragEnd() {
+  clearInterval(DRAG.scrollT);
+  DRAG.active = false;
+  document.body.classList.remove('dragging');
+  if (DRAG.ghost) DRAG.ghost.remove();
+  const li = DRAG.li;
+  li.classList.remove('drag-placeholder'); li.style.height = '';
+  DRAG.justDropped = true; setTimeout(() => { DRAG.justDropped = false; }, 350);
+  const ids = [...$('stopList').children].map((x) => x.dataset.open);
+  const before = S.stops.map((s) => s.id);
+  if (ids.join() === before.join()) { renderRoute(); return; }
+  const byId = Object.fromEntries(S.stops.map((s) => [s.id, s]));
+  S.stops = ids.map((id) => byId[id]).filter(Boolean);
+  renderRoute();
+  await savePositions();
+  renderRoute();
+  toast('Moved ✔ Tap “Keep my order” to update the times.');
+}
+
 // ======================================================================
 // Stop sheet
 // ======================================================================
@@ -1350,6 +1434,7 @@ function bind() {
       if (s) updateStop(s, { status: 'done', completed_at: new Date().toISOString() }).then(() => { renderRoute(); toast('Marked done ✔'); });
       return;
     }
+    if (DRAG.justDropped || DRAG.active) return;
     const o = e.target.closest('[data-open]');
     if (o && !e.target.closest('a')) openStop(o.dataset.open);
   };
@@ -1373,6 +1458,7 @@ function bind() {
 
   $('addUserForm').onsubmit = addUser;
   bindLocations();
+  initStopDrag();
   $('btnGenPass').onclick = () => { $('nuPass').value = genPassword(); };
   $('teamList').onclick = onTeamClick;
   $('btnTeamRefresh').onclick = loadTeam;

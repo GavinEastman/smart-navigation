@@ -261,3 +261,11 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--lime); bord
 
 /* ---- v1.5: trash can on route cards ---- */
 .trash-btn { border: 0; background: var(--red-bg); color: var(--red); border-radius: 8px; width: 34px; height: 30px; font-size: 15px; cursor: pointer; }
+
+/* ---- v1.6: press-and-hold drag to reorder stops ---- */
+.stop { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.drag-ghost { position: fixed; z-index: 4500; margin: 0; pointer-events: none; transform: scale(1.03); box-shadow: 0 12px 30px rgba(0,0,0,.28); border: 2px solid var(--lime) !important; opacity: .97; }
+.drag-placeholder { border: 2px dashed var(--lime) !important; background: transparent !important; box-shadow: none !important; }
+.drag-placeholder > * { visibility: hidden; }
+body.dragging, body.dragging * { cursor: grabbing !important; }
+#vRoute.readonly #dragHint { display: none; }
