@@ -211,12 +211,7 @@ function confirmDeleteRoute(id) {
 }
 
 function defaultStartTime() {
-  // Next quarter hour from now; before 7 AM suggest 7:00.
-  const d = new Date();
-  if (d.getHours() < 7) return '07:00';
-  const m = Math.ceil((d.getHours() * 60 + d.getMinutes() + 1) / 15) * 15;
-  if (m >= 1440) return '07:00';
-  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  return '08:00'; // the shop's normal morning start
 }
 
 /** New route pop-up = route settings, filled in before anything else. */
