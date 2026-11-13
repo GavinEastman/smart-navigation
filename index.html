@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Smart Navigation</title>
+  <meta name="theme-color" content="#123D31">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Smart Nav">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+  <script>try{if(localStorage.getItem('sn.theme')==='dark')document.documentElement.dataset.theme='dark'}catch(e){}</script>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<section id="vLogin" class="view">
+  <div class="login-wrap">
+    <img src="icons/icon-192.png" alt="" class="login-icon">
+    <div class="logo">SMART <span>Navigation</span></div>
+    <div class="logo-sub">J&amp;J VENTURES GAMING</div>
+    <form id="loginForm" class="login-form" autocomplete="on">
+      <label class="lbl" for="loginEmail">Email</label>
+      <input id="loginEmail" type="email" autocomplete="username" required>
+      <label class="lbl" for="loginPass">Password</label>
+      <input id="loginPass" type="password" autocomplete="current-password" required>
+      <button class="btn primary block" id="loginBtn" type="submit">Sign in</button>
+      <div id="loginErr" class="err"></div>
+    </form>
+    <p class="hint center">Accounts are created by your administrator.<br>Need a new password? Ask them to reset it.</p>
+    <div id="setupWarn" class="warn hidden">Setup needed: fill in <b>config.js</b> with your Supabase details (see README).</div>
+  </div>
+</section>
+
+<!-- ============ ROUTES LIST ============ -->
+<section id="vRoutes" class="view hidden">
+  <header class="topbar">
+    <div class="brand">SMART <span>Navigation</span></div>
+    <button class="icon-btn" data-go="settings" aria-label="Settings">⚙︎</button>
+  </header>
+  <main class="page">
+    <div class="row between">
+      <h1 class="page-title">My Routes</h1>
+      <button class="btn primary" id="btnNewRoute">+ New route</button>
+    </div>
+    <div id="routesList" class="list"></div>
+    <div id="routesEmpty" class="empty hidden">
+      <div class="empty-icon">🗺️</div>
+      <p>No routes yet.<br>Tap <b>+ New route</b> to plan your first one.</p>
+    </div>
+  </main>
+</section>
+
+<!-- ============ ROUTE PLANNER ============ -->
+<section id="vRoute" class="view hidden">
+  <header class="topbar">
+    <button class="icon-btn" id="btnBack" aria-label="Back">‹</button>
+    <button class="route-title" id="btnRouteTitle"><span id="routeName">Route</span> <small id="routeDate"></small></button>
+    <button class="icon-btn" id="btnRouteSettings" aria-label="Route settings">☰</button>
+  </header>
+
+  <div id="mapWrap">
+    <div id="map"></div>
+    <button id="btnMapToggle" class="map-toggle">Hide map</button>
+    <button id="btnLocate" class="map-locate" aria-label="Show my location">◎</button>
+  </div>
+
+  <main class="page route-page">
+    <div class="summary" id="summary"></div>
+
+    <div class="search-box">
+      <input id="searchInput" type="search" placeholder="🔍  Add a stop: search address or place" autocomplete="off" enterkeyhint="search">
+      <div id="searchResults" class="search-results hidden"></div>
+    </div>
+    <div class="row wrap gap6">
+      <button class="chip" id="btnPaste">📋 Paste list</button>
+      <label class="chip file-chip">📄 Import Excel / CSV<input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.txt,text/csv"></label>
+    </div>
+    <div id="geoStatus" class="hint"></div>
+
+    <div class="opt-row">
+      <button class="btn primary block big" id="btnOptimize">⚡ Optimize route</button>
+      <button class="btn secondary" id="btnKeepOrder" title="Recalculate times without changing the order">Keep my order</button>
+    </div>
+
+    <div id="nextCard" class="next-card hidden"></div>
+
+    <div class="row between list-head">
+      <strong id="stopCount"></strong>
+      <div class="row gap6">
+        <button class="chip sm" id="btnNavMulti">Google Maps (next 10)</button>
+      </div>
+    </div>
+    <ol id="stopList" class="stops"></ol>
+    <p class="credits">Map © OpenStreetMap contributors · Search by Photon · Routing by OSRM</p>
+  </main>
+</section>
+
+<!-- ============ SETTINGS ============ -->
+<section id="vSettings" class="view hidden">
+  <header class="topbar">
+    <button class="icon-btn" data-go="routes" aria-label="Back">‹</button>
+    <div class="brand">Settings</div>
+    <span class="icon-btn"></span>
+  </header>
+  <main class="page">
+    <div class="card">
+      <div class="card-title">Account</div>
+      <div id="accEmail" class="strong"></div>
+      <div class="hint">Passwords can only be changed by the administrator.</div>
+      <button class="btn secondary block mt" id="btnSignOut">Sign out</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Navigation</div>
+      <label class="lbl" for="setNav">Open directions in</label>
+      <select id="setNav">
+        <option value="auto">Automatic (Apple Maps on iPhone, Google Maps on Android)</option>
+        <option value="google">Google Maps</option>
+        <option value="apple">Apple Maps</option>
+        <option value="waze">Waze</option>
+      </select>
+      <label class="lbl" for="setCountry">Search addresses in country</label>
+      <select id="setCountry">
+        <option value="US">United States</option>
+        <option value="">Any country</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Appearance</div>
+      <label class="switch-row"><span>Dark mode</span><input type="checkbox" id="setDark"></label>
+    </div>
+
+    <div class="card">
+      <div class="card-title">SMART</div>
+      <a class="btn secondary block" id="lnkWorkOrders" target="_blank" rel="noopener">Open My Work Orders – SMART ↗</a>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Install on your phone</div>
+      <p class="hint"><b>iPhone:</b> open this site in Safari → Share → <i>Add to Home Screen</i>.<br>
+      <b>Android:</b> open in Chrome → ⋮ → <i>Install app</i>.</p>
+    </div>
+    <p class="credits" id="versionTap">Smart Navigation v1.1</p>
+  </main>
+</section>
+
+<!-- ============ MANAGE TEAM (owner only) ============ -->
+<section id="vTeam" class="view hidden">
+  <header class="topbar">
+    <button class="icon-btn" data-go="settings" aria-label="Back">‹</button>
+    <div class="brand">Manage Team</div>
+    <span class="icon-btn"></span>
+  </header>
+  <main class="page">
+    <div class="card">
+      <div class="card-title">Add a teammate</div>
+      <form id="addUserForm">
+        <label class="lbl" for="nuName">Name</label>
+        <input id="nuName" type="text" placeholder="First Last">
+        <label class="lbl" for="nuEmail">Email (their sign-in)</label>
+        <input id="nuEmail" type="email" required>
+        <label class="lbl" for="nuPass">Password (at least 8 characters)</label>
+        <div class="row gap6">
+          <input id="nuPass" type="text" minlength="8" required autocomplete="off">
+          <button type="button" class="btn secondary" id="btnGenPass">Generate</button>
+        </div>
+        <button class="btn primary block mt" type="submit" id="btnAddUser">Create account</button>
+        <div id="addUserMsg" class="hint"></div>
+      </form>
+    </div>
+    <div class="row between list-head">
+      <strong id="teamCount">Team</strong>
+      <button class="chip sm" id="btnTeamRefresh">↻ Refresh</button>
+    </div>
+    <div id="teamList" class="list"></div>
+    <p class="hint">Removing someone deletes their login and all of their routes immediately. They can't sign in again.</p>
+  </main>
+</section>
+
+<!-- ============ SHEETS (bottom dialogs) ============ -->
+<div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="sheet-box">
+    <div class="sheet-grab"></div>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<div id="busy" class="busy hidden"><div class="spinner"></div></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="logic.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
