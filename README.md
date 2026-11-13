@@ -5,9 +5,9 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 
 ## What it does
 - **Routes:** each person has their own private list of routes, saved online. Every route starts and finishes at the shop (604 Fort Crook Rd N, Bellevue, NE).
-- **My Routes:** your unfinished route is always pinned at the top under **Current route**. Close the app mid-day, reopen it, and tap **Continue**. Below that are only the routes you completed and chose to save.
+- **My Routes:** any route that isn't completed is pinned at the top with an orange, pulsing **⚠️ NOT COMPLETED** banner ("in progress since…" or "not started yet"). Close the app mid-day, reopen it, tap it and carry on. Below that are only the routes you completed and chose to save.
 - **✔ Complete:** appears once a route is started. It asks **Save route** (kept in My Routes, view-only, and can be duplicated or reopened) or **Don't save** (deleted forever, after a second tap).
-- **New route pop-up:** the route settings (name, date, start time — 8:00 AM by default — and collectors 1/2/3) appear first, before anything else. You can change them later with ☰.
+- **New route pop-up:** the route settings (name, date, start time — 8:00 AM by default — and "How many collectors are on route today?" — 2 by default) appear first, before anything else. You can change them later with ☰.
 - **Reorder stops by dragging:** press and hold a stop (finger or mouse) for about half a second, then drag it up or down. **Move → position** inside a stop still works too. Afterwards, tap **Keep my order** to refresh the times.
 - **Animations** (made in Lottie AI): a moving map behind sign-in, a portal into the map after signing in, "Finding the best route…" while optimizing, a ✔ pop when a stop is marked done, and the car pulling into the shop when a route is completed and saved. All of them are skipped on phones with "reduce motion" on.
 - **Opening animation:** a car drives the route and drops the SMART pin. It plays the first time the app is opened each day, you can tap to skip it, and it's skipped if the phone has "reduce motion" on.
@@ -18,6 +18,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 - **Location editor:** change any field, add or remove contacts and machines, set hours, and set a map point from where you're standing. If two people edit at once, the second save is refused with a "reload" message, so nobody overwrites anyone.
 - **Adding stops:** use **📍 From locations** (multi-select), search by location name, or use any address, a pasted list, or an Excel/CSV file.
 - **Business hours:** Optimize only plans a location while it's open and the service can finish before closing. After-midnight closings count for the day before, and split hours work. It visits open stops first. Locations whose hours aren't filled in yet still say **Hours unknown**, but routes treat them as open any time. A stop it can't fit (closed that day, or can't finish before closing) is marked **Not scheduled**.
+- **⚠️ Attention needed:** if a location isn't open yet at your start time, its stop pulses orange and asks "Can you get in early?" (🔑 Yes, we can get in / ⏰ No, wait till open). **Optimize won't run until it's answered.** Locations that are already open, open 24/7, have no hours on file, or are marked "access any time" never ask.
 - **Hours bypass:**
   - *Per location:* "We can get in any time" (🔑 key, 🔢 door code, or 📞 call owner). That location is always schedulable. The code itself is never stored.
   - *Per stop:* "Ignore business hours for this stop today."
@@ -72,7 +73,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 5. After 1–2 minutes your app is at **`https://YOUR-GITHUB-NAME.github.io/smart-navigation/`**.
 
 ### 7. Add your 13 coworkers
-1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v1.9" line 7 times quickly**. Manage Team opens.
+1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.0" line 7 times quickly**. Manage Team opens.
    There's no button for it anywhere. For anyone else, tapping that line does nothing, and the server refuses them too.
 2. For each person, enter their name and email, tap **Generate** for a password, then tap **Create account**. Use **Copy** to send them their login.
 
@@ -93,7 +94,12 @@ It opens full-screen with the Smart Navigation icon, like a regular app.
 ## Update 1.3 → 1.6 — start / complete / save routes, Fill default, new-route settings, delete button, drag to reorder (do this once)
 1. **Supabase → SQL Editor → New query.** Paste `supabase/003_start_route.sql` (two short lines) and click **Run**. If you already ran an earlier copy of 003, run this one again; it's safe.
 2. **GitHub → Add file → Upload files.** Upload `index.html`, `app.js`, `logic.js`, `locations.js`, `styles.css`, `sw.js`, `README.md`, then click **Commit changes**.
-3. Fully close and reopen the app. The bottom of Settings should say **v1.9**.
+3. Fully close and reopen the app. The bottom of Settings should say **v2.0**.
+
+## Update 2.0 — attention needed (do this once)
+1. **Supabase → SQL Editor → New query.** Paste `supabase/004_hours_answer.sql` (two short lines) and click **Run**. Also run `003_start_route.sql` if you never did.
+2. **GitHub → Add file → Upload files.** Upload `index.html`, `app.js`, `locations.js`, `styles.css`, `sw.js`, `README.md`, plus the `anim` folder if you haven't uploaded it since v1.9. Then click **Commit changes**.
+3. Refresh. Settings should say **v2.0**.
 
 ## Good to know
 - **Removing someone** (hidden Manage Team → Remove) takes effect immediately. Their routes are deleted, and the app signs them out the next time it's opened or brought back on screen.

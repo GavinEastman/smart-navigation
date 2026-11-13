@@ -169,7 +169,9 @@ function routeCard(r) {
   if (r.completed_at) badge = `<span class="tag done">✔ Completed</span>`;
   else if (r.started_at) badge = `<span class="tag key">▶ In progress · since ${SN.fmtClock(new Date(r.started_at))}</span>`;
   else badge = `<span class="tag">Planned${r.start_time ? ' · ' + SN.fmtClock(new Date(`2000-01-01T${r.start_time}`)) : ''}</span>`;
+  const nc = r.completed_at ? '' : `<div class="nc-banner">⚠️ NOT COMPLETED · ${r.started_at ? 'in progress since ' + SN.fmtClock(new Date(r.started_at)) : 'not started yet'}<span>Tap to continue, then ✔ Complete it — or 🗑 delete it</span></div>`;
   return `<div class="route-card ${r.completed_at ? '' : 'current'}" data-id="${r.id}">
+    ${nc}
     <div class="row between"><div class="name">${esc(r.name)}</div>
       <div class="row gap6"><span class="tag">${esc(fmtDate(r.route_date))}</span>
       <button class="trash-btn" data-del="${r.id}" aria-label="Delete route">🗑</button></div></div>
@@ -188,7 +190,8 @@ function renderRoutes() {
     .sort((a, b) => String(b.completed_at).localeCompare(a.completed_at));
   $('routesEmpty').classList.toggle('hidden', S.routes.length > 0);
   $('routesList').innerHTML =
-    (current.length ? `<div class="sec-title">Current route${current.length > 1 ? 's' : ''}</div>${current.map(routeCard).join('')}` : '')
+    (current.length ? `<div class="nc-alert">⚠️ You have ${current.length} route${current.length > 1 ? 's' : ''} not completed</div>
+      <div class="sec-title">Not completed</div>${current.map(routeCard).join('')}` : '')
     + (saved.length ? `<div class="sec-title">Saved routes</div>${saved.map(routeCard).join('')}` : '');
 }
 
@@ -219,7 +222,7 @@ function defaultStartTime() {
 
 /** New route pop-up = route settings, filled in before anything else. */
 function newRoute(after) {
-  let collectors = 1, nameEdited = false;
+  let collectors = 2, nameEdited = false;
   const autoName = (d) => `Route – ${fmtDate(d)}`;
   openSheet(`<h2>New route</h2>
     <div class="sub">Set up your route before adding stops. You can change these later with ☰.</div>
@@ -229,8 +232,8 @@ function newRoute(after) {
       <div style="flex:1"><label class="lbl" for="nrDate">Date</label><input id="nrDate" type="date" value="${todayISO()}"></div>
       <div style="flex:1"><label class="lbl" for="nrTime">Start time</label><input id="nrTime" type="time" value="${defaultStartTime()}"></div>
     </div>
-    <div class="lbl">How many collectors are with you today?</div>
-    ${seg('nrCollectors', [[1, '1'], [2, '2'], [3, '3']], 1)}
+    <div class="lbl">How many collectors are on route today?</div>
+    ${seg('nrCollectors', [[1, '1'], [2, '2'], [3, '3']], 2)}
     <div class="lbl">Start &amp; finish</div>
     <div class="est"><span>🏠 ${esc(CFG.SHOP_NAME || 'Shop')}<br><small class="hint">${esc(CFG.SHOP_ADDRESS || '')}</small></span></div>
     <div class="hint">Tap <b>▶ Start route</b> when you actually leave the shop — times will adjust from then.</div>
@@ -597,6 +600,52 @@ function winOf(stop) {
   return SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, routeDayStart());
 }
 
+/** Is this saved location closed at the route's start time? Returns null if open/always open/unknown hours,
+ *  otherwise { opensAt: Date|null } (null = closed the rest of the day). Uses the location's own hours. */
+function closedAtStart(loc) {
+  if (!loc || loc.access_anytime) return null;
+  const w = SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, routeDayStart());
+  if (w.anytime || w.unknown) return null;
+  const t = departure().getTime();
+  if (w.windows.some(([a, b]) => t >= a && t < b)) return null;
+  const dayEnd = routeDayStart().getTime() + 86400000;
+  const next = w.windows.find(([a]) => a > t && a < dayEnd);
+  return { opensAt: next ? new Date(next[0]) : null };
+}
+/** Stops that need the "can you get in early?" question answered before Optimize. */
+function needsHoursAnswer(s) {
+  return !isFinished(s) && !s.hours_answer && !!closedAtStart(locOf(s));
+}
+function closedText(c) { return c.opensAt ? `Not open yet — opens ${SN.fmtClock(c.opensAt)}` : 'Closed the rest of the day'; }
+
+async function answerHours(s, early) {
+  await updateStop(s, { hours_answer: early ? 'early' : 'wait', ignore_hours: !!early });
+  renderRoute();
+}
+
+function showHoursQuestions(then) {
+  const list = S.stops.filter(needsHoursAnswer);
+  if (!list.length) { closeSheet(); if (then) then(); return; }
+  openSheet(`<h2>⚠️ Attention needed</h2>
+    <div class="sub">${list.length === 1 ? 'This location isn\'t' : 'These locations aren\'t'} open at your start time (${esc(SN.fmtClock(departure()))}). Can you get in early — key, door code, or the owner letting you in?</div>
+    ${list.map((s) => { const c = closedAtStart(locOf(s)); return `<div class="card attn-card">
+      <div class="strong">${esc(s.name || s.address)}</div>
+      <div class="hint">${esc(closedText(c))}</div>
+      <div class="actions" style="grid-template-columns:1fr 1fr">
+        <button class="btn ok" data-early="${s.id}">🔑 Yes, we can get in</button>
+        <button class="btn secondary" data-wait="${s.id}">⏰ No, wait till open</button>
+      </div></div>`; }).join('')}
+    <button class="btn secondary block" id="hqClose">Cancel</button>`, (el) => {
+    el.querySelector('#hqClose').onclick = closeSheet;
+    el.querySelectorAll('[data-early],[data-wait]').forEach((b) => b.onclick = async () => {
+      const s = S.stops.find((x) => x.id === (b.dataset.early || b.dataset.wait));
+      if (!s) return;
+      await answerHours(s, !!b.dataset.early);
+      showHoursQuestions(then);   // next question, or carry on when all answered
+    });
+  });
+}
+
 function unschedReason() { return "Closed, or can't finish before closing"; }
 
 // ---------- Optimize ----------
@@ -620,6 +669,7 @@ async function optimize(keepOrder = false) {
   if (!pending.length) { toast('No remaining stops with a found address.'); return; }
   const blocked = blockingProblems(pending);
   if (blocked.length) { showBlocked(blocked); return; }
+  if (pending.some(needsHoursAnswer)) { showHoursQuestions(() => optimize(keepOrder)); return; }
   showLoader(keepOrder ? 'Updating your times…' : 'Finding the best route…');
   try {
     const shop = await getShop();
@@ -809,6 +859,8 @@ function renderRoute(fit = false) {
   const blocked = blockingProblems(S.stops.filter((s) => !isFinished(s)));
   let head = total ? `${total} stop${total > 1 ? 's' : ''} · ${r.collectors} collector${r.collectors > 1 ? 's' : ''} · leave ${SN.fmtClock(departure())}` : 'No stops yet — search above or add from locations';
   if (blocked.length) head += ` · ⚠️ ${blocked.length} need settings`;
+  const attn = S.stops.filter(needsHoursAnswer).length;
+  if (attn) head += ` · ⚠️ ${attn} need attention`;
   else if (total && !plan.valid && S.stops.some((s) => !isFinished(s) && located(s))) head += ' · tap Optimize to plan';
   $('stopCount').textContent = head;
 
@@ -833,7 +885,7 @@ function renderRoute(fit = false) {
 
   // Stop list
   $('stopList').innerHTML = S.stops.map((s, i) => {
-    const cls = ['stop', s === next ? 'next' : '', s.status].join(' ');
+    const cls = ['stop', s === next ? 'next' : '', s.status, needsHoursAnswer(s) ? 'needs-attn' : ''].join(' ');
     const ex = stopExtras(s);
     let side = '';
     if (!isFinished(s)) {
@@ -845,6 +897,8 @@ function renderRoute(fit = false) {
     const bad = !located(s) ? (S.geoFailed.has(s.id) ? '<div class="bad">Address not found — tap to fix</div>' : '<div class="bad">Finding address…</div>') : '';
     const warn = ex.missing.length ? `<div class="bad">⚠️ ${ex.missing.map(esc).join(' · ')}</div>` : '';
     const why = plan.unsched[s.id] && !isFinished(s) ? `<div class="bad">${esc(plan.unsched[s.id])} — tap to bypass hours</div>` : '';
+    const cl = needsHoursAnswer(s) ? closedAtStart(locOf(s)) : null;
+    const attnB = cl ? `<div class="attn">⚠️ ATTENTION NEEDED · ${esc(closedText(cl))}. Can you get in early? Tap to answer.</div>` : '';
     return `<li class="${cls}" data-open="${s.id}">
       <div class="num">${i + 1}</div>
       <div class="body">
@@ -852,7 +906,7 @@ function renderRoute(fit = false) {
         <div class="ad">${esc(s.address)}</div>
         ${ex.text ? `<div class="ex">${ex.text}</div>` : ''}
         ${s.notes ? `<div class="ex">📝 ${esc(s.notes.slice(0, 60))}${s.notes.length > 60 ? '…' : ''}</div>` : ''}
-        ${bad}${warn}${why}
+        ${attnB}${bad}${warn}${why}
       </div>
       <div class="side">${side}</div>
     </li>`;
@@ -1078,6 +1132,10 @@ function openStop(id) {
       ${loc.hours_comment ? `<div class="hint">${esc(loc.hours_comment)}</div>` : ''}
       ${plan.unsched[s.id] ? `<div class="warn-box">Not scheduled: ${esc(plan.unsched[s.id])}.</div>` : ''}
       ${loc.access_anytime ? `<div class="ok-box">${esc(ACCESS_LABEL[loc.access_method || ''])} — this location can be visited any time.</div>` : ''}
+      ${needsHoursAnswer(s) ? `<div class="attn attn-box">⚠️ <b>Attention needed:</b> ${esc(closedText(closedAtStart(loc)))} (you start ${esc(SN.fmtClock(departure()))}). Can you get in early?
+        <div class="actions" style="grid-template-columns:1fr 1fr;margin-bottom:0">
+          <button class="btn ok" data-ans="early">🔑 Yes, we can get in</button>
+          <button class="btn secondary" data-ans="wait">⏰ No, wait till open</button></div></div>` : ''}
       ${h.status === 'Hours unknown' && !loc.access_anytime ? '<div class="hint">Hours aren\'t filled in yet, so routes treat this location as open any time.</div>' : ''}
       <div class="lbl">Ignore business hours for this stop today</div>
       ${seg('ignore_hours', [['false', 'No'], ['true', 'Yes — we can get in']], !!s.ignore_hours)}
@@ -1140,12 +1198,16 @@ function openStop(id) {
       if (st === 'done') { celebrateDone(); toast('Marked done ✔'); }
     });
     el.querySelector('#stNote').onchange = (e) => updateStop(s, { status_note: e.target.value.trim() });
+    el.querySelectorAll('[data-ans]').forEach((b) => b.onclick = async () => {
+      await answerHours(s, b.dataset.ans === 'early');
+      closeSheet(); toast(b.dataset.ans === 'early' ? 'Got it — hours ignored for this stop' : 'Got it — it will wait until opening');
+    });
 
     el.querySelectorAll('[data-seg]').forEach((sg) => sg.onclick = async (e) => {
       const b = e.target.closest('button'); if (!b || b.disabled) return;
       sg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
       const f = sg.dataset.seg, v = b.dataset.v;
-      if (f === 'ignore_hours') { await updateStop(s, { ignore_hours: v === 'true' }); renderRoute(); toast(v === 'true' ? 'Hours ignored for this stop — tap Optimize' : 'Hours apply again'); return; }
+      if (f === 'ignore_hours') { await updateStop(s, { ignore_hours: v === 'true', hours_answer: v === 'true' ? 'early' : 'wait' }); renderRoute(); toast(v === 'true' ? 'Hours ignored for this stop — tap Optimize' : 'Hours apply again'); return; }
       if (f.startsWith('rt')) {
         const tasks = svcOf(s).tasks.slice(); tasks[+f.slice(2)] = v;
         await updateStop(s, { rt_tasks: tasks });

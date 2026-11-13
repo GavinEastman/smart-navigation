@@ -484,7 +484,11 @@ async function addLocationsToRoute(locs, fromProfile = false) {
     location_id: l.id, name: l.name, address: locAddress(l) || l.name, phone: l.phone || '',
     lat: l.lat, lng: l.lng, rt_tasks: Array(rtCountOf(l)).fill('Fill'),
   })));
-  if (n) toast(`Added ${n} location${n > 1 ? 's' : ''}${fresh.length < locs.length ? ` (${locs.length - fresh.length} already on route)` : ''}`);
+  if (n) {
+    const attn = S.stops.filter(needsHoursAnswer).length;
+    toast(attn ? `Added ${n}. ⚠️ ${attn} not open at your start time — tap ${attn > 1 ? 'them' : 'it'} to answer.`
+               : `Added ${n} location${n > 1 ? 's' : ''}${fresh.length < locs.length ? ` (${locs.length - fresh.length} already on route)` : ''}`, 4500);
+  }
 }
 
 function openLocPicker() {
