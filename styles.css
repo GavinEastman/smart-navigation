@@ -269,3 +269,16 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--lime); bord
 .drag-placeholder > * { visibility: hidden; }
 body.dragging, body.dragging * { cursor: grabbing !important; }
 #vRoute.readonly #dragHint { display: none; }
+
+/* ---- v1.8: opening animation ---- */
+.intro { position: fixed; inset: 0; z-index: 9000; background-color: #054c88;
+  /* full-screen street grid (matches the animation, no box edges) */
+  background-image: linear-gradient(rgba(0,0,0,.18) 3px, transparent 3px), linear-gradient(90deg, rgba(0,0,0,.18) 3px, transparent 3px);
+  background-size: calc(min(92vw, 70vh) * .11) calc(min(92vw, 70vh) * .11); background-position: center center; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: opacity .45s ease; }
+.intro.out { opacity: 0; pointer-events: none; }
+.intro-art { width: min(92vw, 70vh); height: min(92vw, 70vh); }
+.intro-art svg { width: 100%; height: 100%; display: block; }
+.intro-title { margin-top: 6px; font-weight: 900; font-size: 30px; color: #f3f4f3; letter-spacing: .3px; opacity: 0; transform: translateY(8px); transition: opacity .5s ease, transform .5s ease; }
+.intro-title span { color: #8ebe42; }
+.intro-title.show { opacity: 1; transform: none; }
+.intro-skip { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 22px); color: rgba(243,244,243,.55); font-size: 12px; letter-spacing: .5px; }

@@ -1,9 +1,9 @@
 // Keeps the app itself cached so it opens fast on a weak signal.
 // Logins, routes, address search, routing and map tiles always use the network.
-const CACHE = 'smartnav-v1.7';
+const CACHE = 'smartnav-v1.8';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'logic.js', 'locations.js', 'config.js', 'manifest.json',
-  'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
+  'icons/icon-180.png', 'anim/intro.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js',

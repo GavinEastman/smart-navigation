@@ -1462,8 +1462,37 @@ function bind() {
 // ======================================================================
 // Boot
 // ======================================================================
+// ---------- Opening animation: once a day, tap to skip, skipped for "reduce motion" ----------
+async function playIntro() {
+  const el = $('intro');
+  let seen = '';
+  try { seen = localStorage.getItem('sn.introDay') || ''; } catch (e) { /* */ }
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (seen === todayISO() || reduce) return;
+  let svg;
+  try {
+    const res = await fetch('anim/intro.svg');
+    if (!res.ok) return;
+    svg = await res.text();
+  } catch (e) { return; }
+  $('introArt').innerHTML = svg;
+  el.classList.remove('hidden');
+  const timers = [];
+  const finish = () => {
+    timers.forEach(clearTimeout);
+    if (el.classList.contains('out')) return;
+    el.classList.add('out');
+    setTimeout(() => { el.classList.add('hidden'); el.classList.remove('out'); $('introArt').innerHTML = ''; }, 500);
+  };
+  try { localStorage.setItem('sn.introDay', todayISO()); } catch (e) { /* */ }
+  el.onclick = finish;
+  timers.push(setTimeout(() => $('introTitle').classList.add('show'), 2500));
+  timers.push(setTimeout(finish, 4200));
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   loadPrefs();
+  playIntro();
   bind();
   initAuth();
 });
