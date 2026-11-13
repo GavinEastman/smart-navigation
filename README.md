@@ -7,7 +7,9 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 - **Routes:** each person has their own private list of routes, saved online. Every route starts and finishes at the shop (604 Fort Crook Rd N, Bellevue, NE).
 - **My Routes:** your unfinished route is always pinned at the top under **Current route**. Close the app mid-day, reopen it, and tap **Continue**. Below that are only the routes you completed and chose to save.
 - **✔ Complete:** appears once a route is started. It asks **Save route** (kept in My Routes, view-only, and can be duplicated or reopened) or **Don't save** (deleted forever, after a second tap).
-- **New route pop-up:** asks how many collectors (1, 2 or 3) and what time you'll start. On the route page, **🕗 Planned start → Change** adjusts the time later, and **▶ Start route** records when you really leave, so every ETA is recalculated from that moment.
+- **New route pop-up:** the route settings (name, date, start time, and collectors 1/2/3) appear first, before anything else. You can change them later with ☰.
+- **🗑 on each route** in My Routes asks "Delete *route name*?" with Yes / No.
+- On the route page, **🕗 Planned start → Change** adjusts the time later, and **▶ Start route** records when you really leave, so every ETA is recalculated from that moment.
 - **📍 Locations tab:** the shared list of all J&J locations, with search, a city filter, and "Settings needed", "Access anytime" and "Incomplete" filters. Everyone can view and edit them.
 - **Location profile:** address, phone, account manager, hours (today in bold), contacts with Call / Text / Email buttons, every machine listed separately (duplicates kept), notes, account details, and who changed it last.
 - **Location editor:** change any field, add or remove contacts and machines, set hours, and set a map point from where you're standing. If two people edit at once, the second save is refused with a "reload" message, so nobody overwrites anyone.
@@ -67,7 +69,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 5. After 1–2 minutes your app is at **`https://YOUR-GITHUB-NAME.github.io/smart-navigation/`**.
 
 ### 7. Add your 13 coworkers
-1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v1.4" line 7 times quickly**. Manage Team opens.
+1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v1.5" line 7 times quickly**. Manage Team opens.
    There's no button for it anywhere. For anyone else, tapping that line does nothing, and the server refuses them too.
 2. For each person, enter their name and email, tap **Generate** for a password, then tap **Create account**. Use **Copy** to send them their login.
 
@@ -85,10 +87,10 @@ It opens full-screen with the Smart Navigation icon, like a regular app.
 4. **Before routing a location,** confirm its skill game count and ACH (and payout tickets if it has no RT) on its profile. Each takes one tap.
    ⚠️ Never upload `source.json` or the spreadsheet to GitHub: that site is public. The import sends the data straight to your private database.
 
-## Update 1.3 / 1.4 — start, complete & save routes, Fill default (do this once)
+## Update 1.3 / 1.4 / 1.5 — start, complete & save routes, Fill default, new-route settings, delete button (do this once)
 1. **Supabase → SQL Editor → New query.** Paste `supabase/003_start_route.sql` (two short lines) and click **Run**. If you already ran an earlier copy of 003, run this one again; it's safe.
 2. **GitHub → Add file → Upload files.** Upload `index.html`, `app.js`, `logic.js`, `locations.js`, `styles.css`, `sw.js`, `README.md`, then click **Commit changes**.
-3. Fully close and reopen the app. The bottom of Settings should say **v1.4**.
+3. Fully close and reopen the app. The bottom of Settings should say **v1.5**.
 
 ## Good to know
 - **Removing someone** (hidden Manage Team → Remove) takes effect immediately. Their routes are deleted, and the app signs them out the next time it's opened or brought back on screen.

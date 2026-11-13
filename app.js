@@ -167,7 +167,9 @@ function routeCard(r) {
   else if (r.started_at) badge = `<span class="tag key">▶ In progress · since ${SN.fmtClock(new Date(r.started_at))}</span>`;
   else badge = `<span class="tag">Planned${r.start_time ? ' · ' + SN.fmtClock(new Date(`2000-01-01T${r.start_time}`)) : ''}</span>`;
   return `<div class="route-card ${r.completed_at ? '' : 'current'}" data-id="${r.id}">
-    <div class="row between"><div class="name">${esc(r.name)}</div><span class="tag">${esc(fmtDate(r.route_date))}</span></div>
+    <div class="row between"><div class="name">${esc(r.name)}</div>
+      <div class="row gap6"><span class="tag">${esc(fmtDate(r.route_date))}</span>
+      <button class="trash-btn" data-del="${r.id}" aria-label="Delete route">🗑</button></div></div>
     <div class="meta">${bits.join(' · ')}${total ? ` · ${done}/${total} done` : ''}</div>
     <div class="row between mt-s">${badge}${r.completed_at ? '' : '<span class="go">Continue ›</span>'}</div>
     <div class="progress"><div style="width:${pct}%"></div></div>
@@ -187,6 +189,27 @@ function renderRoutes() {
     + (saved.length ? `<div class="sec-title">Saved routes</div>${saved.map(routeCard).join('')}` : '');
 }
 
+function confirmDeleteRoute(id) {
+  const r = S.routes.find((x) => x.id === id);
+  if (!r) return;
+  openSheet(`<h2>Delete route?</h2>
+    <div class="sub">Do you want to delete <b>“${esc(r.name)}”</b> (${esc(fmtDate(r.route_date))}, ${r.stops.length} stop${r.stops.length === 1 ? '' : 's'})? This can't be undone.</div>
+    <div class="actions" style="grid-template-columns:1fr 1fr">
+      <button class="btn secondary big" id="drNo">No</button>
+      <button class="btn danger big" id="drYes">Yes, delete</button>
+    </div>`, (el) => {
+    el.querySelector('#drNo').onclick = closeSheet;
+    el.querySelector('#drYes').onclick = async () => {
+      const { error } = await sb.from('routes').delete().eq('id', id);
+      if (dbErr(error, 'Delete')) return;
+      closeSheet();
+      S.routes = S.routes.filter((x) => x.id !== id);
+      renderRoutes();
+      toast(`Deleted “${r.name}”`);
+    };
+  });
+}
+
 function defaultStartTime() {
   // Next quarter hour from now; before 7 AM suggest 7:00.
   const d = new Date();
@@ -196,20 +219,28 @@ function defaultStartTime() {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
-/** New route pop-up: how many collectors, and when the route will start. */
+/** New route pop-up = route settings, filled in before anything else. */
 function newRoute(after) {
-  let collectors = 1;
+  let collectors = 1, nameEdited = false;
+  const autoName = (d) => `Route – ${fmtDate(d)}`;
   openSheet(`<h2>New route</h2>
-    <div class="sub">A couple of quick questions before you add stops.</div>
+    <div class="sub">Set up your route before adding stops. You can change these later with ☰.</div>
+    <label class="lbl" for="nrName">Route name</label>
+    <input id="nrName" type="text" value="${esc(autoName(todayISO()))}">
+    <div class="row gap6">
+      <div style="flex:1"><label class="lbl" for="nrDate">Date</label><input id="nrDate" type="date" value="${todayISO()}"></div>
+      <div style="flex:1"><label class="lbl" for="nrTime">Start time</label><input id="nrTime" type="time" value="${defaultStartTime()}"></div>
+    </div>
     <div class="lbl">How many collectors are with you today?</div>
     ${seg('nrCollectors', [[1, '1'], [2, '2'], [3, '3']], 1)}
-    <div class="row gap6">
-      <div style="flex:1"><label class="lbl" for="nrTime">What time will you start the route?</label><input id="nrTime" type="time" value="${defaultStartTime()}"></div>
-    </div>
-    <label class="lbl" for="nrDate">Date</label><input id="nrDate" type="date" value="${todayISO()}">
-    <div class="hint">You can change the start time later, and tap <b>▶ Start route</b> when you actually leave the shop.</div>
+    <div class="lbl">Start &amp; finish</div>
+    <div class="est"><span>🏠 ${esc(CFG.SHOP_NAME || 'Shop')}<br><small class="hint">${esc(CFG.SHOP_ADDRESS || '')}</small></span></div>
+    <div class="hint">Tap <b>▶ Start route</b> when you actually leave the shop — times will adjust from then.</div>
     <button class="btn primary block big mt" id="nrCreate">Create route</button>
     <button class="btn secondary block mt" id="nrCancel">Cancel</button>`, (el) => {
+    const nameEl = el.querySelector('#nrName'), dateEl = el.querySelector('#nrDate');
+    nameEl.oninput = () => { nameEdited = true; };
+    dateEl.onchange = () => { if (!nameEdited) nameEl.value = autoName(dateEl.value || todayISO()); };
     el.querySelector('#nrCancel').onclick = closeSheet;
     el.querySelector('[data-seg="nrCollectors"]').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
@@ -217,12 +248,13 @@ function newRoute(after) {
       collectors = +b.dataset.v;
     };
     el.querySelector('#nrCreate').onclick = async () => {
-      const d = el.querySelector('#nrDate').value || todayISO();
+      const d = dateEl.value || todayISO();
       const t = el.querySelector('#nrTime').value || null;
+      const name = nameEl.value.trim() || autoName(d);
       if (!t) { toast('Pick a start time.'); return; }
       closeSheet();
       const { data, error } = await sb.from('routes')
-        .insert({ name: `Route – ${fmtDate(d)}`, route_date: d, collectors, start_time: t }).select('*').single();
+        .insert({ name, route_date: d, collectors, start_time: t }).select('*').single();
       if (dbErr(error, 'Creating route')) return;
       await openRoute(data.id);
       if (typeof after === 'function') after();
@@ -1272,7 +1304,11 @@ function bind() {
   $('loginForm').onsubmit = login;
   document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => show(b.dataset.go));
   $('btnNewRoute').onclick = () => newRoute();
-  $('routesList').onclick = (e) => { const c = e.target.closest('.route-card'); if (c) openRoute(c.dataset.id); };
+  $('routesList').onclick = (e) => {
+    const del = e.target.closest('[data-del]');
+    if (del) { e.stopPropagation(); confirmDeleteRoute(del.dataset.del); return; }
+    const c = e.target.closest('.route-card'); if (c) openRoute(c.dataset.id);
+  };
 
   $('btnBack').onclick = () => { S.route = null; show('routes'); };
   $('btnRouteSettings').onclick = openRouteSettings;

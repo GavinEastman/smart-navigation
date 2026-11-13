@@ -258,3 +258,6 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--lime); bord
 .mt-s { margin-top: 8px; }
 #vRoute.readonly .search-box, #vRoute.readonly .route-page > .row.wrap, #vRoute.readonly .opt-row,
 #vRoute.readonly #nextCard, #vRoute.readonly #geoStatus { display: none !important; }
+
+/* ---- v1.5: trash can on route cards ---- */
+.trash-btn { border: 0; background: var(--red-bg); color: var(--red); border-radius: 8px; width: 34px; height: 30px; font-size: 15px; cursor: pointer; }
