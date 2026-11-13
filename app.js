@@ -26,6 +26,9 @@ const S = {
   geoFailed: new Set(),
   me: null,
   prefs: { nav: 'auto', country: 'US' },
+  locations: [],          // shared location list (with devices + contacts)
+  locById: new Map(),
+  locLoaded: false,
 };
 
 // ======================================================================
@@ -87,14 +90,14 @@ const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.g
 // ======================================================================
 // Views
 // ======================================================================
-const VIEWS = { login: 'vLogin', routes: 'vRoutes', route: 'vRoute', settings: 'vSettings', team: 'vTeam' };
+const VIEWS = { login: 'vLogin', routes: 'vRoutes', route: 'vRoute', settings: 'vSettings', team: 'vTeam', location: 'vLocation', locedit: 'vLocEdit' };
 let currentView = 'login';
 function show(name) {
   Object.values(VIEWS).forEach((id) => $(id).classList.add('hidden'));
   $(VIEWS[name]).classList.remove('hidden');
   currentView = name;
   window.scrollTo(0, 0);
-  if (name === 'routes') loadRoutes();
+  if (name === 'routes') { loadRoutes(); if (!S.locLoaded) loadLocations(); }
   if (name === 'settings') renderSettings();
   if (name === 'team') loadTeam();
   if (name === 'route' && map) setTimeout(() => map.invalidateSize(), 50);
@@ -189,6 +192,7 @@ async function openRoute(id) {
   busy(false);
   if (dbErr(e1 || e2, 'Opening route')) return;
   S.route = route; S.stops = stops || []; S.geoFailed.clear();
+  if (!S.locLoaded) await loadLocations();
   show('route');
   initMap();
   renderRoute(true);
@@ -288,8 +292,12 @@ async function geocodeMissing() {
     while (todo.length && S.route && S.route.id === routeId) {
       const s = todo.shift(); i++;
       $('geoStatus').textContent = `Finding addresses… ${i} of ${i + todo.length}`;
-      const g = await geocode(s.address);
-      if (g) await updateStop(s, { lat: g.lat, lng: g.lng });
+      const loc = locOf(s);
+      const g = loc && loc.lat != null ? { lat: loc.lat, lng: loc.lng } : await geocode(s.address);
+      if (g) {
+        await updateStop(s, { lat: g.lat, lng: g.lng });
+        if (loc && loc.lat == null) saveLocCoords(loc, g);
+      }
       else S.geoFailed.add(s.id);
       renderRoute();
       await sleep(250);
@@ -315,10 +323,7 @@ async function addStops(list) {
       phone: s.phone || '', notes: s.notes || '',
       lat: s.lat ?? null, lng: s.lng ?? null,
     };
-    if (s.games != null) r.games = Math.min(200, Math.max(0, s.games | 0));
-    if (s.has_rt != null) r.has_rt = !!s.has_rt;
-    if (s.ach !== undefined) r.ach = s.ach;
-    if (s.payout_tickets !== undefined) r.payout_tickets = r.has_rt ? false : s.payout_tickets;
+    if (s.location_id) { r.location_id = s.location_id; r.rt_tasks = s.rt_tasks || []; }
     return r;
   });
   busy(true);
@@ -340,12 +345,14 @@ function onSearchInput() {
   if (q.length < 3) { hideResults(); return; }
   searchT = setTimeout(async () => {
     const seq = ++searchSeq;
+    const locHits = matchLocations(q).slice(0, 5);
     let hits = [];
-    try { hits = await photonSearch(q); } catch (e) { /* offline */ }
+    try { hits = await photonSearch(q, locHits.length ? 4 : 6); } catch (e) { /* offline */ }
     if (seq !== searchSeq) return;
     searchHits = hits;
     const box = $('searchResults');
-    box.innerHTML = hits.map((h, i) => `<div class="sr" data-i="${i}"><div class="t">${esc(h.name || h.address.split(',')[0])}</div><div class="d">${esc(h.address)}</div></div>`).join('')
+    box.innerHTML = locHits.map((l) => `<div class="sr" data-loc="${esc(l.id)}"><div class="t">📍 ${esc(l.name)}</div><div class="d">${esc(locAddress(l))}</div></div>`).join('')
+      + hits.map((h, i) => `<div class="sr" data-i="${i}"><div class="t">${esc(h.name || h.address.split(',')[0])}</div><div class="d">${esc(h.address)}</div></div>`).join('')
       + `<div class="sr" data-i="typed"><div class="t">➕ Add “${esc(q)}” as typed</div><div class="d">We'll look it up</div></div>`;
     box.classList.remove('hidden');
   }, 300);
@@ -444,7 +451,7 @@ async function osrmRoute(points) {
     if (d.code !== 'Ok') return null;
     const r = d.routes[0];
     // keep the line light: every 3rd point
-    const line = r.geometry.coordinates.filter((_, i, a) => i % 3 === 0 || i === a.length - 1).map(([lng, lat]) => [+lat.toFixed(5), +lng.toFixed(5)]);
+    const line = r.geometry.coordinates.filter((_, i, a) => a.length < 900 || i % 3 === 0 || i === a.length - 1).map(([lng, lat]) => [+lat.toFixed(5), +lng.toFixed(5)]);
     return { line, legs: r.legs.map((l) => ({ s: l.duration, m: l.distance })), distance: r.distance, duration: r.duration };
   } catch (e) { return null; }
 }
@@ -470,38 +477,94 @@ async function getShop() {
   return g;
 }
 
+// ---------- Service time & business hours for a stop ----------
+function locOf(stop) { return stop && stop.location_id ? S.locById.get(stop.location_id) || null : null; }
+function rtCountOf(loc) { return (loc.devices || []).filter((d) => /redemption/i.test(d.category)).length; }
+function gameCountOf(loc) { return (loc.devices || []).filter((d) => /skill/i.test(d.category)).length; }
+
+/** { minutes, missing[], tasks[] } — location stops use the strict rules; other stops use "minutes on site". */
+function svcOf(stop) {
+  const loc = locOf(stop);
+  const collectors = (S.route && S.route.collectors) || 1;
+  if (!loc) return { minutes: Number(stop.service_override) || 0, missing: [], tasks: [] };
+  return SN.locationService({
+    games: loc.games_confirmed, ach: loc.ach, payout: loc.payout_tickets,
+    rtCount: rtCountOf(loc), rtTasks: stop.rt_tasks || [],
+  }, collectors);
+}
+
+function routeDayStart() {
+  const [y, m, d] = String(S.route.route_date || todayISO()).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+/** When the truck leaves the shop: start time if set, otherwise now (today) or 7:00 AM (other days). */
+function departure() {
+  const r = S.route, day = routeDayStart();
+  if (r.start_time) { const [h, mi] = r.start_time.split(':').map(Number); return new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, mi); }
+  if (r.route_date === todayISO()) return new Date();
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 7, 0);
+}
+
+/** Opening windows for a stop on the route day. Bypasses: stop "ignore hours today" or location "access anytime". */
+function winOf(stop) {
+  const loc = locOf(stop);
+  if (!loc || stop.ignore_hours || loc.access_anytime) return { anytime: true };
+  return SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, routeDayStart());
+}
+
+function unschedReason(win) { return win.unknown ? 'Hours unknown' : "Closed, or can't finish before closing"; }
+
+// ---------- Optimize ----------
+function blockingProblems(stops) {
+  return stops.map((s) => ({ s, loc: locOf(s), svc: svcOf(s) })).filter((x) => x.loc && x.svc.missing.length);
+}
+function showBlocked(list) {
+  openSheet(`<h2>Fix these first</h2>
+    <div class="sub">Service time can't be calculated until these settings are confirmed on the location. Unknown settings block Optimize.</div>
+    ${list.map(({ s, loc, svc }) => `<div class="card"><div class="strong">${esc(loc.name)}</div>
+      <div class="hint">${svc.missing.map(esc).join(' · ')}</div>
+      <button class="btn secondary sm mt" data-fixloc="${esc(loc.id)}">Open location →</button></div>`).join('')}
+    <button class="btn secondary block" id="blkClose">Close</button>`, (el) => {
+    el.querySelector('#blkClose').onclick = closeSheet;
+    el.querySelectorAll('[data-fixloc]').forEach((b) => b.onclick = () => { closeSheet(); openLocation(b.dataset.fixloc, 'route'); });
+  });
+}
+
 async function optimize(keepOrder = false) {
   const pending = S.stops.filter((s) => !isFinished(s) && located(s));
   if (!pending.length) { toast('No remaining stops with a found address.'); return; }
+  const blocked = blockingProblems(pending);
+  if (blocked.length) { showBlocked(blocked); return; }
   busy(true);
   try {
     const shop = await getShop();
     if (!shop) { toast("Couldn't find the shop address. Check your connection, or set SHOP_LAT/SHOP_LNG in config.js."); return; }
     const start = { ...shop, kind: 'shop' };
-    const end = null;
-    const closeLoop = true; // always finish back at the shop
+    const dep = departure();
 
-    let ordered = pending;
-    if (!keepOrder && pending.length > 1) {
-      const pts = [start, ...pending, ...(end ? [end] : [])];
+    let ordered = pending, unsched = [];
+    if (!keepOrder) {
+      const pts = [start, ...pending];
       const m = await osrmTable(pts);
-      const order = SN.solve(m, { fixedEnd: !!end, closeLoop });
-      ordered = order.filter((i) => i >= 1 && i <= pending.length).map((i) => pending[i - 1]);
+      const info = pending.map((s) => ({ win: winOf(s), svcMin: svcOf(s).minutes }));
+      const plan = SN.scheduleRoute(m, info, dep.getTime());
+      ordered = plan.order.map((i) => pending[i - 1]);
+      unsched = plan.unscheduled.map((i) => pending[i - 1]);
     }
 
-    // finished stops stay on top, then the plan, then anything without an address match
     const finished = S.stops.filter(isFinished);
     const unlocated = S.stops.filter((s) => !isFinished(s) && !located(s));
-    S.stops = [...finished, ...ordered, ...unlocated];
+    S.stops = [...finished, ...ordered, ...unsched, ...unlocated];
     await savePositions();
 
-    const routePts = [start, ...ordered];
-    if (end) routePts.push(end); else if (closeLoop) routePts.push(start);
-    const geo = await osrmRoute(routePts);
+    const routePts = [start, ...ordered, start];
+    const geo = ordered.length ? await osrmRoute(routePts) : null;
     const legs = {
-      start: { lat: start.lat, lng: start.lng, kind: start.kind },
+      start: { lat: start.lat, lng: start.lng, kind: 'shop' },
       items: ordered.map((s, i) => ({ id: s.id, s: geo ? geo.legs[i].s : null, m: geo ? geo.legs[i].m : null })),
-      back: geo && (end || closeLoop) ? geo.legs[geo.legs.length - 1] : null,
+      back: geo ? geo.legs[geo.legs.length - 1] : null,
+      unscheduled: unsched.map((s) => ({ id: s.id, reason: unschedReason(winOf(s)) })),
+      dep: dep.toISOString(),
       at: new Date().toISOString(),
     };
     await updateRoute({
@@ -512,38 +575,38 @@ async function optimize(keepOrder = false) {
       optimized_at: new Date().toISOString(),
     });
     renderRoute(true);
-    toast(keepOrder ? 'Times updated ✔' : 'Route optimized ✔');
+    if (unsched.length) toast(`${unsched.length} stop${unsched.length > 1 ? 's' : ''} couldn't fit in business hours — see the bottom of the list.`, 5000);
+    else toast(keepOrder ? 'Times updated ✔' : 'Route optimized ✔');
   } finally { busy(false); }
 }
 
-// ETA plan — valid only while the stop order matches the last calculation
+/** ETAs, waits and warnings. Valid only while the stop order matches the last calculation.
+ *  Once a stop is marked done, later ETAs are recalculated from the time it was actually finished. */
 function computePlan() {
   const r = S.route, legs = r.legs;
-  const collectors = r.collectors || 1;
-  const serviceTotal = S.stops.filter((s) => !isFinished(s)).reduce((a, s) => a + SN.serviceMinutes(s, collectors), 0);
-  const plan = { valid: false, eta: {}, serviceTotal, finish: null };
+  const serviceTotal = S.stops.filter((s) => !isFinished(s)).reduce((a, s) => a + svcOf(s).minutes, 0);
+  const plan = { valid: false, eta: {}, wait: {}, late: {}, unsched: {}, serviceTotal, finish: null };
   if (!legs || !legs.items) return plan;
+  (legs.unscheduled || []).forEach((u) => { plan.unsched[u.id] = u.reason; });
   const ids = legs.items.map((x) => x.id);
+  const known = new Set([...ids, ...Object.keys(plan.unsched)]);
   const inOrder = S.stops.filter((s) => ids.includes(s.id)).map((s) => s.id);
   const pendingLocated = S.stops.filter((s) => !isFinished(s) && located(s)).map((s) => s.id);
-  if (inOrder.join() !== ids.join() || pendingLocated.some((id) => !ids.includes(id))) return plan;
+  if (inOrder.join() !== ids.join() || pendingLocated.some((id) => !known.has(id))) return plan;
   if (legs.items.some((x) => x.s == null)) return plan;
 
-  let clock;
-  if (r.start_time) clock = new Date(`${r.route_date}T${r.start_time}`);
-  else clock = new Date(legs.at || r.optimized_at);
+  let clock = r.start_time ? departure() : new Date(legs.dep || legs.at || r.optimized_at);
   const byId = Object.fromEntries(S.stops.map((s) => [s.id, s]));
   for (const it of legs.items) {
     const st = byId[it.id];
-    // Running late or early? Once a stop is marked done, every later ETA
-    // is recalculated from the moment it was actually finished.
-    if (isFinished(st)) {
-      if (st.completed_at) clock = new Date(st.completed_at);
-      continue;
-    }
-    clock = new Date(clock.getTime() + it.s * 1000);
-    plan.eta[it.id] = new Date(clock);
-    clock = new Date(clock.getTime() + SN.serviceMinutes(st, collectors) * 60000);
+    if (isFinished(st)) { if (st.completed_at) clock = new Date(st.completed_at); continue; }
+    const arrive = clock.getTime() + it.s * 1000;
+    const svcMs = svcOf(st).minutes * 60000;
+    let start = SN.earliestStart(winOf(st), arrive, svcMs);
+    if (start == null) { plan.late[st.id] = true; start = arrive; }
+    plan.eta[st.id] = new Date(arrive);
+    if (start > arrive + 60000) plan.wait[st.id] = new Date(start);
+    clock = new Date(start + svcMs);
   }
   if (legs.back) clock = new Date(clock.getTime() + legs.back.s * 1000);
   plan.finish = clock;
@@ -621,13 +684,21 @@ async function locateMe() {
 // ======================================================================
 // Route rendering
 // ======================================================================
-function svcTags(s) {
-  const t = [];
-  if (s.games) t.push(`🎰 ${s.games}`);
-  if (s.has_rt) t.push(`RT${s.rt_task && s.rt_task !== 'No Fill' ? ' ' + s.rt_task : ''}`);
-  if (s.ach === true) t.push('ACH'); else if (s.ach === false) t.push('Non-ACH');
-  if (!s.has_rt && s.payout_tickets === true) t.push('Payout tix');
-  return t;
+const ACCESS_LABEL = { key: '🔑 Key', code: '🔢 Door code', call: '📞 Call owner', '': '🔑 Access anytime' };
+
+function stopExtras(s) {
+  const loc = locOf(s), out = [];
+  const svc = svcOf(s);
+  if (loc) {
+    const g = loc.games_confirmed, rt = rtCountOf(loc);
+    if (g != null) out.push(`🎰 ${g}`);
+    if (rt) out.push(`RT ×${rt}${svc.tasks.some((t) => t !== 'None') ? ' (' + svc.tasks.filter((t) => t !== 'None').join(', ') + ')' : ''}`);
+    if (loc.ach === true) out.push('ACH'); else if (loc.ach === false) out.push('Non-ACH');
+    if (loc.access_anytime) out.push(ACCESS_LABEL[loc.access_method || '']);
+    if (s.ignore_hours) out.push('⏰ hours ignored today');
+  }
+  if (!svc.missing.length && svc.minutes) out.push(`⏱ ${svc.minutes} min`);
+  return { text: out.map(esc).join(' · '), missing: svc.missing };
 }
 
 function renderRoute(fit = false) {
@@ -638,31 +709,32 @@ function renderRoute(fit = false) {
   const plan = computePlan();
   const total = S.stops.length, done = S.stops.filter(isFinished).length;
 
-  // Summary tiles
   const drive = plan.valid && r.total_drive ? SN.fmtDur(r.total_drive) : '—';
   const miles = plan.valid && r.total_distance ? SN.fmtMiles(r.total_distance) : '—';
   $('summary').innerHTML = `
     <div class="s"><div class="v">${done}/${total}</div><div class="k">Stops</div></div>
     <div class="s"><div class="v">${miles}</div><div class="k">Distance</div></div>
     <div class="s"><div class="v">${drive}</div><div class="k">Drive</div></div>
-    <div class="s"><div class="v">${plan.valid ? SN.fmtClock(plan.finish) : SN.fmtDur(plan.serviceTotal * 60)}</div><div class="k">${plan.valid ? 'Finish' : 'Service'}</div></div>`;
+    <div class="s"><div class="v">${plan.valid ? SN.fmtClock(plan.finish) : SN.fmtDur(plan.serviceTotal * 60)}</div><div class="k">${plan.valid ? 'Back at shop' : 'Service'}</div></div>`;
 
   $('btnKeepOrder').classList.toggle('hidden', total < 1);
-  $('stopCount').textContent = total ? `${total} stop${total > 1 ? 's' : ''} · ${r.collectors} collector${r.collectors > 1 ? 's' : ''}` : 'No stops yet — search above to add some';
-  if (total && !plan.valid && S.stops.some((s) => !isFinished(s) && located(s))) {
-    $('stopCount').textContent += ' · tap Optimize to plan';
-  }
+  const blocked = blockingProblems(S.stops.filter((s) => !isFinished(s)));
+  let head = total ? `${total} stop${total > 1 ? 's' : ''} · ${r.collectors} collector${r.collectors > 1 ? 's' : ''} · leave ${SN.fmtClock(departure())}` : 'No stops yet — search above or add from locations';
+  if (blocked.length) head += ` · ⚠️ ${blocked.length} need settings`;
+  else if (total && !plan.valid && S.stops.some((s) => !isFinished(s) && located(s))) head += ' · tap Optimize to plan';
+  $('stopCount').textContent = head;
 
   // Next stop card
-  const next = S.stops.find((s) => !isFinished(s) && located(s));
+  const next = S.stops.find((s) => !isFinished(s) && located(s) && !plan.unsched[s.id]);
   const nc = $('nextCard');
-  if (next && plan.valid) {
+  if (next && plan.valid && plan.eta[next.id]) {
     const idx = S.stops.indexOf(next) + 1;
-    const svc = SN.serviceMinutes(next, r.collectors);
+    const svc = svcOf(next);
+    const w = plan.wait[next.id];
     nc.innerHTML = `<div class="lab">NEXT STOP · #${idx}</div>
       <div class="nm">${esc(next.name || next.address.split(',')[0])}</div>
       <div class="ad">${esc(next.address)}</div>
-      <div class="eta">ETA ${SN.fmtClock(plan.eta[next.id])} · ${svc} min on site</div>
+      <div class="eta">ETA ${SN.fmtClock(plan.eta[next.id])}${w ? ` · opens — start ${SN.fmtClock(w)}` : ''}${plan.late[next.id] ? ' · ⚠️ outside business hours' : ''} · ${svc.minutes} min on site</div>
       <div class="row">
         <a class="btn lime" href="${navUrl(next)}" target="_blank" rel="noopener">➤ Navigate</a>
         <button class="btn secondary" data-done="${next.id}">✔ Done</button>
@@ -674,20 +746,27 @@ function renderRoute(fit = false) {
   // Stop list
   $('stopList').innerHTML = S.stops.map((s, i) => {
     const cls = ['stop', s === next ? 'next' : '', s.status].join(' ');
-    const svc = SN.serviceMinutes(s, r.collectors);
-    const tags = svcTags(s);
-    const eta = plan.valid && plan.eta[s.id] && !isFinished(s) ? `<div class="t">${SN.fmtClock(plan.eta[s.id])}</div>` : '';
-    const status = s.status === 'done' ? '<span class="tag done">Done</span>' : s.status === 'failed' ? '<span class="tag failed">Failed</span>' : s.status === 'skipped' ? '<span class="tag">Skipped</span>' : '';
+    const ex = stopExtras(s);
+    let side = '';
+    if (!isFinished(s)) {
+      if (plan.unsched[s.id]) side = `<span class="tag failed">Not scheduled</span>`;
+      else if (plan.valid && plan.eta[s.id]) side = `<div class="t">${SN.fmtClock(plan.eta[s.id])}</div>${plan.wait[s.id] ? `<div>start ${SN.fmtClock(plan.wait[s.id])}</div>` : ''}${plan.late[s.id] ? '<span class="tag warn">Hours</span>' : ''}`;
+    } else {
+      side = s.status === 'done' ? '<span class="tag done">Done</span>' : s.status === 'failed' ? '<span class="tag failed">Failed</span>' : '<span class="tag">Skipped</span>';
+    }
     const bad = !located(s) ? (S.geoFailed.has(s.id) ? '<div class="bad">Address not found — tap to fix</div>' : '<div class="bad">Finding address…</div>') : '';
+    const warn = ex.missing.length ? `<div class="bad">⚠️ ${ex.missing.map(esc).join(' · ')}</div>` : '';
+    const why = plan.unsched[s.id] && !isFinished(s) ? `<div class="bad">${esc(plan.unsched[s.id])} — tap to bypass hours</div>` : '';
     return `<li class="${cls}" data-open="${s.id}">
       <div class="num">${i + 1}</div>
       <div class="body">
         ${s.name ? `<div class="nm">${esc(s.name)}</div>` : ''}
         <div class="ad">${esc(s.address)}</div>
-        <div class="ex">${tags.map(esc).join(' · ')}${svc ? `${tags.length ? ' · ' : ''}⏱ ${svc} min` : ''}${s.notes ? ` · 📝 ${esc(s.notes.slice(0, 40))}${s.notes.length > 40 ? '…' : ''}` : ''}</div>
-        ${bad}
+        ${ex.text ? `<div class="ex">${ex.text}</div>` : ''}
+        ${s.notes ? `<div class="ex">📝 ${esc(s.notes.slice(0, 60))}${s.notes.length > 60 ? '…' : ''}</div>` : ''}
+        ${bad}${warn}${why}
       </div>
-      <div class="side">${eta}${status}</div>
+      <div class="side">${side}</div>
     </li>`;
   }).join('');
   drawMap(fit);
@@ -701,57 +780,94 @@ function seg(name, options, value, disabled = false) {
     `<button type="button" data-v="${v}" class="${String(value) === String(v) ? 'on' : ''}" ${disabled ? 'disabled' : ''}>${label}</button>`).join('')}</div>`;
 }
 
+function hoursToday(loc, date = new Date()) {
+  const key = SN.DAYS[date.getDay()];
+  const txt = (loc.hours || {})[key];
+  const w = SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, new Date(date.getFullYear(), date.getMonth(), date.getDate()));
+  let status;
+  if (w.anytime) status = 'Open 24/7';
+  else if (w.unknown) status = 'Hours unknown';
+  else status = w.windows.some(([a, b]) => date >= a && date < b) ? 'Open now' : 'Closed now';
+  return { txt: txt || '—', status };
+}
+
 function openStop(id) {
   const s = S.stops.find((x) => x.id === id);
   if (!s) return;
   const idx = S.stops.indexOf(s) + 1;
   const r = S.route;
-  const tri = (v) => (v === true ? 'yes' : v === false ? 'no' : 'unk');
+  const loc = locOf(s);
+  const svc = svcOf(s);
+  const plan = computePlan();
+  const phone = s.phone || (loc && loc.phone) || '';
   const statusBtns = s.status === 'pending'
     ? `<button class="btn ok" data-st="done">✔ Done</button><button class="btn danger" data-st="failed">✖ Failed</button><button class="btn secondary" data-st="skipped">Skip</button>`
     : `<button class="btn secondary" data-st="pending" style="grid-column: span 3">↺ Mark as not done (${esc(s.status)})</button>`;
+
+  let hoursCard = '', svcCard = '';
+  if (loc) {
+    const h = hoursToday(loc, routeDayStart().toDateString() === new Date().toDateString() ? new Date() : routeDayStart());
+    const rt = rtCountOf(loc);
+    hoursCard = `<div class="card mt">
+      <div class="card-title">Hours</div>
+      <div class="row between"><span>${esc(SN.DAYS[routeDayStart().getDay()].replace(/^./, (c) => c.toUpperCase()))}: <b>${esc(h.txt)}</b></span><span class="tag">${esc(h.status)}</span></div>
+      ${loc.hours_comment ? `<div class="hint">${esc(loc.hours_comment)}</div>` : ''}
+      ${plan.unsched[s.id] ? `<div class="warn-box">Not scheduled: ${esc(plan.unsched[s.id])}.</div>` : ''}
+      ${loc.access_anytime ? `<div class="ok-box">${esc(ACCESS_LABEL[loc.access_method || ''])} — this location can be visited any time.</div>` : ''}
+      <div class="lbl">Ignore business hours for this stop today</div>
+      ${seg('ignore_hours', [['false', 'No'], ['true', 'Yes — we can get in']], !!s.ignore_hours)}
+      <div class="hint">Use this when you have a key or door code, or the owner is letting you in. Tap Optimize afterwards.</div>
+    </div>`;
+    const gamesTxt = loc.games_confirmed != null ? `${loc.games_confirmed}` : `<span class="err">Not confirmed</span> <span class="hint">(device list shows ${gameCountOf(loc)})</span>`;
+    const tri = (v, y, n) => (v === true ? y : v === false ? n : '<span class="err">Unknown</span>');
+    svcCard = `<div class="card">
+      <div class="card-title">Service time</div>
+      <div class="kv">
+        <span class="k">Skill games</span><span>${gamesTxt}</span>
+        <span class="k">ACH</span><span>${tri(loc.ach, 'ACH', 'Non-ACH')}</span>
+        <span class="k">Payout tickets</span><span>${rt ? 'No (has RT)' : tri(loc.payout_tickets, 'Yes', 'No')}</span>
+        <span class="k">Redemption terminals</span><span>${rt}</span>
+      </div>
+      ${svc.tasks.map((t, i) => `<div class="lbl">RT ${i + 1} task today</div>${seg('rt' + i, [['None', 'None'], ['Fill', 'Fill'], ['Swap', 'Swap']], t)}`).join('')}
+      ${svc.missing.length
+        ? `<div class="warn-box">Can't estimate: ${svc.missing.map(esc).join(', ')}. Fix it on the location.</div>`
+        : `<div class="est"><span>On site (${r.collectors} collector${r.collectors > 1 ? 's' : ''})</span><b id="estVal">${svc.minutes} min</b></div>`}
+      <button class="btn secondary block mt" id="stOpenLoc">📍 Open location profile</button>
+    </div>`;
+  } else {
+    svcCard = `<div class="card mt">
+      <div class="card-title">Time on site</div>
+      <label class="lbl" for="stMinutes">Minutes</label>
+      <input id="stMinutes" type="number" inputmode="numeric" min="0" max="1440" value="${s.service_override ?? 0}">
+      <div class="hint">For stops that aren't saved locations (pickups, supply runs…).</div>
+    </div>`;
+  }
 
   openSheet(`
     <h2>#${idx} ${esc(s.name || s.address.split(',')[0])}</h2>
     <div class="sub">${esc(s.address)}</div>
     <div class="actions">
       <a class="btn primary" href="${navUrl(s)}" target="_blank" rel="noopener">➤ Navigate</a>
-      ${s.phone ? `<a class="btn secondary" href="tel:${esc(s.phone.replace(/[^+\d]/g, ''))}">📞 Call</a>` : '<button class="btn secondary" disabled>📞 No phone</button>'}
+      ${phone ? `<a class="btn secondary" href="tel:${esc(phone.replace(/[^+\d]/g, ''))}">📞 Call</a>` : '<button class="btn secondary" disabled>📞 No phone</button>'}
       <button class="btn secondary" id="stMove">↕ Move</button>
     </div>
     <div class="actions">${statusBtns}</div>
-    <label class="lbl" for="stNote">Delivery / visit note</label>
+    <label class="lbl" for="stNote">Visit note</label>
     <textarea id="stNote" rows="2" placeholder="e.g. closed, manager not in, left with bartender">${esc(s.status_note)}</textarea>
-
-    <div class="card mt">
-      <div class="card-title">Service time</div>
-      <div class="svc"><span class="lb">Skill games</span>
-        <div class="stepper"><button type="button" id="gMinus">−</button><span id="gVal">${s.games}</span><button type="button" id="gPlus">+</button></div></div>
-      <div class="svc"><span class="lb">Redemption terminal</span>${seg('has_rt', [['false', 'No'], ['true', 'Yes']], s.has_rt)}</div>
-      <div id="rtTaskRow" class="${s.has_rt ? '' : 'hidden'}"><div class="lbl">RT task</div>${seg('rt_task', [['No Fill', 'No Fill'], ['Fill', 'Fill'], ['Swap', 'Swap']], s.rt_task)}</div>
-      <div class="lbl">ACH</div>${seg('ach', [['yes', 'ACH'], ['no', 'Non-ACH'], ['unk', 'Unknown']], tri(s.ach))}
-      <div class="lbl">Payout tickets${s.has_rt ? ' (not allowed with an RT)' : ''}</div>${seg('payout_tickets', [['yes', 'Yes'], ['no', 'No'], ['unk', 'Unknown']], s.has_rt ? 'no' : tri(s.payout_tickets), s.has_rt)}
-      <label class="lbl" for="stOverride">Override minutes (leave blank for automatic)</label>
-      <input id="stOverride" type="number" inputmode="numeric" min="0" max="1440" value="${s.service_override ?? ''}">
-      <div class="est"><span>Estimated on site (${r.collectors} collector${r.collectors > 1 ? 's' : ''})</span><b id="estVal">${SN.serviceMinutes(s, r.collectors)} min</b></div>
-    </div>
-
+    ${hoursCard}
+    ${svcCard}
     <div class="card">
       <div class="card-title">Stop details</div>
-      <label class="lbl" for="stName">Name / location</label><input id="stName" type="text" value="${esc(s.name)}">
+      ${loc ? '' : `<label class="lbl" for="stName">Name</label><input id="stName" type="text" value="${esc(s.name)}">
       <label class="lbl" for="stAddr">Address</label><input id="stAddr" type="text" value="${esc(s.address)}">
-      <label class="lbl" for="stPhone">Phone</label><input id="stPhone" type="text" inputmode="tel" value="${esc(s.phone)}">
-      <label class="lbl" for="stNotes">Notes</label><textarea id="stNotes" rows="3">${esc(s.notes)}</textarea>
-      <button class="btn primary block mt" id="stSave">Save details</button>
+      <label class="lbl" for="stPhone">Phone</label><input id="stPhone" type="text" inputmode="tel" value="${esc(s.phone)}">`}
+      <label class="lbl" for="stNotes">Notes for this stop</label><textarea id="stNotes" rows="2">${esc(s.notes)}</textarea>
+      <button class="btn primary block mt" id="stSave">Save</button>
     </div>
-    <button class="btn danger block" id="stDelete">Delete stop</button>
+    <button class="btn danger block" id="stDelete">Remove stop from route</button>
     <button class="btn secondary block mt" id="stClose">Close</button>
   `, (el) => {
-    const refreshEst = () => { el.querySelector('#estVal').textContent = `${SN.serviceMinutes(s, r.collectors)} min`; renderRoute(); };
-    const fromTri = (v) => (v === 'yes' ? true : v === 'no' ? false : null);
-
     el.querySelector('#stClose').onclick = closeSheet;
-
     el.querySelectorAll('[data-st]').forEach((b) => b.onclick = async () => {
       const st = b.dataset.st;
       await updateStop(s, { status: st, status_note: el.querySelector('#stNote').value.trim(), completed_at: st === 'pending' ? null : new Date().toISOString() });
@@ -760,36 +876,30 @@ function openStop(id) {
     });
     el.querySelector('#stNote').onchange = (e) => updateStop(s, { status_note: e.target.value.trim() });
 
-    // service fields
-    const setGames = (n) => { n = Math.max(0, Math.min(200, n)); el.querySelector('#gVal').textContent = n; updateStop(s, { games: n }).then(refreshEst); s.games = n; refreshEst(); };
-    el.querySelector('#gMinus').onclick = () => setGames(s.games - 1);
-    el.querySelector('#gPlus').onclick = () => setGames(s.games + 1);
-    el.querySelectorAll('[data-seg]').forEach((sg) => sg.onclick = (e) => {
+    el.querySelectorAll('[data-seg]').forEach((sg) => sg.onclick = async (e) => {
       const b = e.target.closest('button'); if (!b || b.disabled) return;
       sg.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
       const f = sg.dataset.seg, v = b.dataset.v;
-      if (f === 'has_rt') {
-        const rt = v === 'true';
-        const patch = { has_rt: rt };
-        if (rt) patch.payout_tickets = false;
-        updateStop(s, patch).then(() => { closeSheet(); openStop(s.id); renderRoute(); });
-        return;
+      if (f === 'ignore_hours') { await updateStop(s, { ignore_hours: v === 'true' }); renderRoute(); toast(v === 'true' ? 'Hours ignored for this stop — tap Optimize' : 'Hours apply again'); return; }
+      if (f.startsWith('rt')) {
+        const tasks = svcOf(s).tasks.slice(); tasks[+f.slice(2)] = v;
+        await updateStop(s, { rt_tasks: tasks });
+        const ev = el.querySelector('#estVal'); if (ev) ev.textContent = `${svcOf(s).minutes} min`;
+        renderRoute();
       }
-      if (f === 'rt_task') updateStop(s, { rt_task: v });
-      if (f === 'ach') updateStop(s, { ach: fromTri(v) });
-      if (f === 'payout_tickets') updateStop(s, { payout_tickets: fromTri(v) });
-      refreshEst();
     });
-    el.querySelector('#stOverride').onchange = (e) => {
-      const v = e.target.value.trim();
-      updateStop(s, { service_override: v === '' ? null : Math.max(0, Math.min(1440, parseInt(v, 10) || 0)) }).then(refreshEst);
-    };
+    const minEl = el.querySelector('#stMinutes');
+    if (minEl) minEl.onchange = (e) => updateStop(s, { service_override: Math.max(0, Math.min(1440, parseInt(e.target.value, 10) || 0)) }).then(() => renderRoute());
+    const ol = el.querySelector('#stOpenLoc');
+    if (ol) ol.onclick = () => { closeSheet(); openLocation(loc.id, 'route'); };
 
-    // details
     el.querySelector('#stSave').onclick = async () => {
-      const addr = el.querySelector('#stAddr').value.trim();
-      const patch = { name: el.querySelector('#stName').value.trim(), phone: el.querySelector('#stPhone').value.trim(), notes: el.querySelector('#stNotes').value.trim() };
-      if (addr && addr !== s.address) { Object.assign(patch, { address: addr, lat: null, lng: null }); S.geoFailed.delete(s.id); }
+      const patch = { notes: el.querySelector('#stNotes').value.trim() };
+      if (!loc) {
+        const addr = el.querySelector('#stAddr').value.trim();
+        Object.assign(patch, { name: el.querySelector('#stName').value.trim(), phone: el.querySelector('#stPhone').value.trim() });
+        if (addr && addr !== s.address) { Object.assign(patch, { address: addr, lat: null, lng: null }); S.geoFailed.delete(s.id); }
+      }
       await updateStop(s, patch);
       if (patch.address) { markStale(); geocodeMissing(); }
       closeSheet(); renderRoute(); toast('Saved');
@@ -814,7 +924,7 @@ function openStop(id) {
 
     el.querySelector('#stDelete').onclick = (e) => twoTap(e.currentTarget, async () => {
       const { error } = await sb.from('stops').delete().eq('id', s.id);
-      if (dbErr(error, 'Delete')) return;
+      if (dbErr(error, 'Remove')) return;
       S.stops = S.stops.filter((x) => x.id !== s.id);
       closeSheet(); renderRoute(true); savePositions();
     });
@@ -1027,13 +1137,22 @@ function bind() {
 
   $('searchInput').oninput = onSearchInput;
   $('searchInput').onkeydown = (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); if (searchHits.length && !$('searchResults').classList.contains('hidden')) pickResult(0); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = $('searchResults').querySelector('.sr');
+      if (first && !$('searchResults').classList.contains('hidden')) first.click();
+    }
     if (e.key === 'Escape') hideResults();
   };
-  $('searchResults').onclick = (e) => { const r = e.target.closest('.sr'); if (r) pickResult(r.dataset.i); };
+  $('searchResults').onclick = (e) => {
+    const r = e.target.closest('.sr'); if (!r) return;
+    if (r.dataset.loc) { $('searchInput').value = ''; hideResults(); addLocationsToRoute([S.locById.get(r.dataset.loc)]); return; }
+    pickResult(r.dataset.i);
+  };
   document.addEventListener('click', (e) => { if (!e.target.closest('.search-box')) hideResults(); });
 
   $('btnPaste').onclick = openPaste;
+  $('btnFromLocs').onclick = () => openLocPicker();
   $('fileInput').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) importFile(f); };
   $('btnOptimize').onclick = () => optimize(false);
   $('btnKeepOrder').onclick = () => optimize(true);
@@ -1068,6 +1187,7 @@ function bind() {
   };
 
   $('addUserForm').onsubmit = addUser;
+  bindLocations();
   $('btnGenPass').onclick = () => { $('nuPass').value = genPassword(); };
   $('teamList').onclick = onTeamClick;
   $('btnTeamRefresh').onclick = loadTeam;
@@ -1076,9 +1196,11 @@ function bind() {
 // ======================================================================
 // Boot
 // ======================================================================
-loadPrefs();
-bind();
-initAuth();
+window.addEventListener('DOMContentLoaded', () => {
+  loadPrefs();
+  bind();
+  initAuth();
+});
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }

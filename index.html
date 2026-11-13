@@ -43,7 +43,11 @@
     <div class="brand">SMART <span>Navigation</span></div>
     <button class="icon-btn" data-go="settings" aria-label="Settings">⚙︎</button>
   </header>
-  <main class="page">
+  <div class="tabs">
+    <button class="tab on" data-tab="routes">🗺️ My Routes</button>
+    <button class="tab" data-tab="locations">📍 Locations</button>
+  </div>
+  <main class="page" id="paneRoutes">
     <div class="row between">
       <h1 class="page-title">My Routes</h1>
       <button class="btn primary" id="btnNewRoute">+ New route</button>
@@ -53,6 +57,25 @@
       <div class="empty-icon">🗺️</div>
       <p>No routes yet.<br>Tap <b>+ New route</b> to plan your first one.</p>
     </div>
+  </main>
+  <main class="page hidden" id="paneLocations">
+    <div class="row between">
+      <h1 class="page-title">Locations <small id="locCount" class="hint"></small></h1>
+      <button class="btn primary" id="btnNewLoc">+ New</button>
+    </div>
+    <input id="locSearch" type="search" placeholder="🔍  Search name, address, city or manager" autocomplete="off">
+    <div class="row gap6 mt">
+      <select id="locCity" style="flex:1"><option value="">All cities</option></select>
+      <select id="locFilter" style="flex:1">
+        <option value="">All locations</option>
+        <option value="needs">⚠️ Settings needed</option>
+        <option value="access">🔑 Access anytime</option>
+        <option value="incomplete">Incomplete records</option>
+      </select>
+    </div>
+    <div id="locList" class="list mt"></div>
+    <button class="btn secondary block mt hidden" id="locMore">Show more</button>
+    <div id="locEmpty" class="empty hidden"><div class="empty-icon">📍</div><p id="locEmptyText">No locations yet.</p></div>
   </main>
 </section>
 
@@ -74,10 +97,11 @@
     <div class="summary" id="summary"></div>
 
     <div class="search-box">
-      <input id="searchInput" type="search" placeholder="🔍  Add a stop: search address or place" autocomplete="off" enterkeyhint="search">
+      <input id="searchInput" type="search" placeholder="🔍  Add a stop: location name, address or place" autocomplete="off" enterkeyhint="search">
       <div id="searchResults" class="search-results hidden"></div>
     </div>
     <div class="row wrap gap6">
+      <button class="chip" id="btnFromLocs">📍 From locations</button>
       <button class="chip" id="btnPaste">📋 Paste list</button>
       <label class="chip file-chip">📄 Import Excel / CSV<input type="file" id="fileInput" accept=".csv,.xlsx,.xls,.txt,text/csv"></label>
     </div>
@@ -99,6 +123,26 @@
     <ol id="stopList" class="stops"></ol>
     <p class="credits">Map © OpenStreetMap contributors · Search by Photon · Routing by OSRM</p>
   </main>
+</section>
+
+<!-- ============ LOCATION PROFILE ============ -->
+<section id="vLocation" class="view hidden">
+  <header class="topbar">
+    <button class="icon-btn" id="btnLocBack" aria-label="Back">‹</button>
+    <div class="brand ellipsis" id="locTitle">Location</div>
+    <button class="icon-btn" id="btnLocEdit" aria-label="Edit">✎</button>
+  </header>
+  <main class="page" id="locBody"></main>
+</section>
+
+<!-- ============ LOCATION EDITOR ============ -->
+<section id="vLocEdit" class="view hidden">
+  <header class="topbar">
+    <button class="icon-btn" id="btnEditCancel" aria-label="Cancel">✕</button>
+    <div class="brand" id="editTitle">Edit location</div>
+    <span class="icon-btn"></span>
+  </header>
+  <main class="page" id="editBody"></main>
 </section>
 
 <!-- ============ SETTINGS ============ -->
@@ -138,6 +182,11 @@
     </div>
 
     <div class="card">
+      <div class="card-title">Team activity</div>
+      <button class="btn secondary block" id="btnActivity">🕘 Recent location changes</button>
+    </div>
+
+    <div class="card">
       <div class="card-title">SMART</div>
       <a class="btn secondary block" id="lnkWorkOrders" target="_blank" rel="noopener">Open My Work Orders – SMART ↗</a>
     </div>
@@ -147,7 +196,7 @@
       <p class="hint"><b>iPhone:</b> open this site in Safari → Share → <i>Add to Home Screen</i>.<br>
       <b>Android:</b> open in Chrome → ⋮ → <i>Install app</i>.</p>
     </div>
-    <p class="credits" id="versionTap">Smart Navigation v1.1</p>
+    <p class="credits" id="versionTap">Smart Navigation v1.2</p>
   </main>
 </section>
 
@@ -175,6 +224,12 @@
         <div id="addUserMsg" class="hint"></div>
       </form>
     </div>
+    <div class="card">
+      <div class="card-title">Import locations (one time)</div>
+      <p class="hint">Choose <b>source.json</b> from your SMART-Navigation data folder. Locations go straight into your private database. Import only works while the locations list is empty, so it can never overwrite anyone's edits.</p>
+      <label class="btn secondary block file-chip mt">📂 Choose source.json<input type="file" id="importFile" accept=".json,application/json"></label>
+      <div id="importMsg" class="hint"></div>
+    </div>
     <div class="row between list-head">
       <strong id="teamCount">Team</strong>
       <button class="chip sm" id="btnTeamRefresh">↻ Refresh</button>
@@ -200,5 +255,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="logic.js"></script>
 <script src="app.js"></script>
+<script src="locations.js"></script>
 </body>
 </html>

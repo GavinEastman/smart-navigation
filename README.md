@@ -4,14 +4,23 @@ Route planner for the SMART team (J&J Ventures Gaming), an add-on to *My Work Or
 It installs from a link on iPhone and Android. There's no App Store and no sign-up page: only accounts you create can get in.
 
 ## What it does
-- **Routes:** each person has their own private list of routes, saved online so they're there on any phone they sign in from.
-- **Adding stops:** search an address or business, paste a list, or import an Excel/CSV file. Columns it recognizes: *Location Name, Street Address, City, State, ZIP Code, Location Phone, Skill Game Count, Redemption Terminals, ACH, Payout Tickets, Notes*. Your old J&J spreadsheet layout works as-is.
-- **Optimize:** finds the fastest order using real drive times (up to 98 stops). Every route **starts and finishes at the shop** (604 Fort Crook Rd N, Bellevue, NE). **Keep my order** recalculates times without reordering.
-- **Times:** a map, total miles, drive time, an ETA at every stop and a finish time back at the shop that includes service time. When you mark a stop **Done**, the remaining ETAs shift to match: run 5 minutes late and everything after moves 5 minutes.
-- **Service time:** your formula. Games ×3, RT Fill 5 / Swap 10, payout tickets 12 (blocked when there's an RT), Non-ACH 7, and 1–3 collectors. You can override the minutes on any stop.
-- **Next stop card:** one tap to **Navigate** (Apple Maps, Google Maps or Waze) and **Done**. Stops can also be marked Failed or Skipped with a note, moved, duplicated, or reset.
+- **Routes:** each person has their own private list of routes, saved online. Every route starts and finishes at the shop (604 Fort Crook Rd N, Bellevue, NE).
+- **📍 Locations tab:** the shared list of all J&J locations, with search, a city filter, and "Settings needed", "Access anytime" and "Incomplete" filters. Everyone can view and edit them.
+- **Location profile:** address, phone, account manager, hours (today in bold), contacts with Call / Text / Email buttons, every machine listed separately (duplicates kept), notes, account details, and who changed it last.
+- **Location editor:** change any field, add or remove contacts and machines, set hours, and set a map point from where you're standing. If two people edit at once, the second save is refused with a "reload" message, so nobody overwrites anyone.
+- **Adding stops:** use **📍 From locations** (multi-select), search by location name, or use any address, a pasted list, or an Excel/CSV file.
+- **Business hours:** Optimize only plans a location while it's open and the service can finish before closing. After-midnight closings count for the day before, and split hours work. It visits open stops first. A stop it can't fit is marked **Not scheduled** with the reason (hours unknown, or closed / can't finish in time).
+- **Hours bypass:**
+  - *Per location:* "We can get in any time" (🔑 key, 🔢 door code, or 📞 call owner). That location is always schedulable. The code itself is never stored.
+  - *Per stop:* "Ignore business hours for this stop today."
+- **Strict service time:** skill games ×3, each RT's task (None 0 / Fill 5 / Swap 10, summed per terminal), Non-ACH 7, and payout tickets 12 (only without an RT).
+  - Crew 1 = everything. Crew 2 = everything except RT. Crew 3 = half of everything, rounded up.
+  - If a location's game count, ACH or payout setting is **unknown, Optimize is blocked** until someone confirms it. A "Fix these first" list takes you straight there.
+- **Live ETAs:** an ETA and start time for each stop (including waits for opening), and the time you'll be back at the shop. Marking a stop **Done** shifts the rest of the day's times to match.
+- **Activity log:** ⚙︎ → Recent location changes shows who changed what.
+- **Navigation:** one tap to Navigate (Apple Maps, Google Maps or Waze), plus Call, Done / Failed / Skip with a note.
 - **Look:** dark mode, and a link to My Work Orders – SMART.
-- **Manage Team (hidden, only you):** add accounts, reset passwords, rename, and remove people. Removing someone deletes their login and all of their routes immediately.
+- **Manage Team (hidden, only you):** add, reset, rename and remove accounts, plus the one-time location import.
 
 ---
 
@@ -55,7 +64,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 5. After 1–2 minutes your app is at **`https://YOUR-GITHUB-NAME.github.io/smart-navigation/`**.
 
 ### 7. Add your 13 coworkers
-1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v1.1" line 7 times quickly**. Manage Team opens.
+1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v1.2" line 7 times quickly**. Manage Team opens.
    There's no button for it anywhere. For anyone else, tapping that line does nothing, and the server refuses them too.
 2. For each person, enter their name and email, tap **Generate** for a password, then tap **Create account**. Use **Copy** to send them their login.
 
@@ -66,10 +75,18 @@ It opens full-screen with the Smart Navigation icon, like a regular app.
 
 ---
 
+## Update 1.2 — locations (do this once)
+1. **Supabase → SQL Editor → New query.** Paste all of `supabase/002_locations.sql` and click **Run**. Approve the warning if one appears. It should end with "Success". It's safe to run twice.
+2. **GitHub → your repo → Add file → Upload files.** Drag in these files from this folder: `index.html`, `app.js`, `logic.js`, `locations.js` (new), `styles.css`, `sw.js`, `config.js`, `README.md`. Then click **Commit changes**.
+3. Open the app and sign in as yourself. Go to ⚙︎ Settings and tap **"Smart Navigation v1.2"** 7 times. In **Import locations**, choose `source.json` from your SMART-Navigation **data** folder. In about 30 seconds you should see **543 locations, 430 contacts, 2538 devices**. Import only runs while the list is empty, so it can't overwrite anyone's edits.
+4. **Before routing a location,** confirm its skill game count and ACH (and payout tickets if it has no RT) on its profile. Each takes one tap.
+   ⚠️ Never upload `source.json` or the spreadsheet to GitHub: that site is public. The import sends the data straight to your private database.
+
 ## Good to know
 - **Removing someone** (hidden Manage Team → Remove) takes effect immediately. Their routes are deleted, and the app signs them out the next time it's opened or brought back on screen.
 - **Passwords:** the app has no change-password or forgot-password option, so only you can reset them.
 - **Updating the app:** upload the changed files to the same GitHub repo. Phones pick up the new version the next time the app is opened.
 - **Free services:** address search uses OpenStreetMap (Photon/Nominatim), and drive times come from the public OSRM server. Both are free and fine for a 14-person team, but neither has a guaranteed uptime. If OSRM is down, the app falls back to a straight-line estimate. Live traffic isn't needed: Apple/Google Maps handle traffic while driving, and the app's ETAs re-adjust every time a stop is marked Done.
 - **Supabase free plan** pauses a project after a week with **no** use at all. Daily use keeps it awake.
-- Your old customer spreadsheet data is **not** included in this app.
+- **Hours rules:** "-", blank, "22" and equal open/close times (e.g. "12:00 AM - 12:00 AM") count as **unknown**, and unknown hours can't be auto-scheduled. Fix them on the location (for example, set Open 24/7), or use one of the bypasses.
+- Customer data lives only in your private Supabase database, never in the public GitHub files.

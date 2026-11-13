@@ -178,6 +178,150 @@
     }).filter((s) => s.address);
   }
 
+  // ---------- Service time for a saved location (strict rules) ----------
+  // G = confirmed skill games × 3. RT = sum of each terminal's task (Fill 5, Swap 10, None 0).
+  // A = Non-ACH 7, ACH 0. P = payout tickets 12, only when there is no RT and payout is Yes.
+  // Crew 1: G+RT+A+P. Crew 2: G+A+P (RT excluded). Crew 3: ceil((G+RT+A+P)/2).
+  // Anything unknown is reported in `missing` and the stop can't be optimized until fixed.
+  const RT_TASK_MIN = { None: 0, Fill: 5, Swap: 10 };
+  function locationService({ games, ach, payout, rtCount, rtTasks }, collectors) {
+    const missing = [];
+    if (games == null) missing.push('skill game count not confirmed');
+    if (ach == null) missing.push('ACH unknown');
+    if (!rtCount && payout == null) missing.push('payout tickets unknown');
+    const tasks = Array.from({ length: rtCount || 0 }, (_, i) => (rtTasks && rtTasks[i]) || 'None');
+    const G = (games || 0) * 3;
+    const RT = tasks.reduce((a, t) => a + (RT_TASK_MIN[t] || 0), 0);
+    const A = ach === false ? 7 : 0;
+    const P = !rtCount && payout === true ? 12 : 0;
+    const c = Number(collectors) || 1;
+    const minutes = c === 2 ? G + A + P : c === 3 ? Math.ceil((G + RT + A + P) / 2) : G + RT + A + P;
+    return { minutes, missing, tasks };
+  }
+
+  // ---------- Business hours ----------
+  const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  function parseClock(s) {
+    const m = String(s).trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([AaPp])\.?\s*[Mm]?\.?$/);
+    if (!m) return null;
+    let h = +m[1]; const min = +(m[2] || 0);
+    if (h < 1 || h > 12 || min > 59) return null;
+    if (/p/i.test(m[3]) && h !== 12) h += 12;
+    if (/a/i.test(m[3]) && h === 12) h = 0;
+    return h * 60 + min;
+  }
+  /** One day's hours text → list of [openMin, closeMin] (close may exceed 1440 = after midnight),
+   *  [] = closed, null = unknown. "22", "-", blank and equal open/close are treated as unknown. */
+  function parseDayHours(v) {
+    if (v == null) return null;
+    const s = String(v).trim();
+    if (!s || s === '-' || s === '—' || s === '22' || /^(none|n\/a|unknown)$/i.test(s)) return null;
+    if (/^closed$/i.test(s)) return [];
+    if (/24\s*(hours|hrs|h)|open 24/i.test(s)) return [[0, 1440]];
+    const out = [];
+    for (const part of s.split(/[;,]/)) {
+      if (!part.trim()) continue;
+      const m = part.match(/^\s*(.+?)\s*[-–—]\s*(.+?)\s*$/);
+      if (!m) return null;
+      const o = parseClock(m[1]); let c = parseClock(m[2]);
+      if (o == null || c == null || o === c) return null;
+      if (c < o) c += 1440;
+      out.push([o, c]);
+    }
+    return out.length ? out : null;
+  }
+  const is247 = (comment) => /24\s*\/\s*7|24 hours|open 24/i.test(String(comment || ''));
+
+  /**
+   * Opening windows (absolute ms) around a route day.
+   * dayStart: Date at local midnight of the route day. Looks at the day before (for after-midnight
+   * closing) through `days` days ahead. Returns { anytime } | { unknown } | { windows: [[a,b],...] }.
+   */
+  function openWindows(hours, comment, open247, dayStart, days = 2) {
+    if (open247 || is247(comment)) return { anytime: true };
+    const y = dayStart.getFullYear(), mo = dayStart.getMonth(), d0 = dayStart.getDate();
+    const windows = [];
+    for (let d = -1; d <= days; d++) {
+      const date = new Date(y, mo, d0 + d);
+      const iv = parseDayHours((hours || {})[DAYS[date.getDay()]]);
+      if (iv == null) { if (d === 0) return { unknown: true }; continue; }
+      for (const [o, c] of iv) {
+        windows.push([new Date(y, mo, d0 + d, 0, o).getTime(), new Date(y, mo, d0 + d, 0, c).getTime()]);
+      }
+    }
+    windows.sort((a, b) => a[0] - b[0]);
+    return { windows };
+  }
+
+  /** Earliest time service can start at/after `arrive` and still finish by closing. null = can't. */
+  function earliestStart(win, arrive, durMs) {
+    if (!win || win.unknown) return null;
+    if (win.anytime) return arrive;
+    for (const [a, b] of win.windows) {
+      const s = Math.max(arrive, a);
+      if (s + durMs <= b) return s;
+    }
+    return null;
+  }
+
+  /**
+   * Hours-aware route plan. Index 0 of m is the shop (start & finish).
+   * stops[i-1] = { win, svcMin }. Returns { order (indices ≥1 that fit), unscheduled (indices), finish }.
+   */
+  const HORIZON_MS = 24 * 3600 * 1000; // a route must finish within 24 hours of leaving the shop
+  function simulate(order, m, stops, dep) {
+    let clock = dep, prev = 0, early = 0;
+    const seq = [], unscheduled = [];
+    for (const i of order) {
+      const st = stops[i - 1];
+      const arrive = clock + m[prev][i] * 1000;
+      const start = earliestStart(st.win, arrive, st.svcMin * 60000);
+      if (start == null || start + st.svcMin * 60000 + m[i][0] * 1000 > dep + HORIZON_MS) { unscheduled.push(i); continue; }
+      seq.push(i); clock = start + st.svcMin * 60000; prev = i; early += start - dep;
+    }
+    const finish = clock + m[prev][0] * 1000;
+    // Main goal: fit every stop, then get back to the shop soonest.
+    // Small tie-breaker: visit stops earlier rather than sitting and waiting for a late opener.
+    return { seq, unscheduled, finish, cost: unscheduled.length * 1e13 + finish + early * 0.02 };
+  }
+
+  function scheduleRoute(m, stops, dep) {
+    const n = m.length;
+    if (n <= 1) return { order: [], unscheduled: [], finish: dep };
+    const all = [...Array(n - 1).keys()].map((i) => i + 1);
+    const evalO = (o) => simulate(o, m, stops, dep).cost;
+    const closeOf = (i) => { const w = stops[i - 1].win; return w.anytime ? Infinity : w.unknown ? Infinity : (w.windows.find((x) => x[1] > dep) || [0, Infinity])[1]; };
+    const seeds = [
+      solve(m, { closeLoop: true }).slice(1),
+      all.slice().sort((a, b) => closeOf(a) - closeOf(b) || m[0][a] - m[0][b]),
+    ];
+    let best = null, bestC = Infinity;
+    for (let order of seeds) {
+      let c = evalO(order), changed = true, rounds = 0;
+      while (changed && rounds < 30) {
+        changed = false; rounds++;
+        for (let i = 0; i < order.length - 1; i++) {
+          for (let k = i + 1; k < order.length; k++) {
+            const cand = order.slice(0, i).concat(order.slice(i, k + 1).reverse(), order.slice(k + 1));
+            const cc = evalO(cand);
+            if (cc < c - 1) { order = cand; c = cc; changed = true; }
+          }
+        }
+        for (let i = 0; i < order.length; i++) {
+          for (let j = 0; j < order.length; j++) {
+            if (i === j) continue;
+            const cand = order.slice(); const [x] = cand.splice(i, 1); cand.splice(j, 0, x);
+            const cc = evalO(cand);
+            if (cc < c - 1) { order = cand; c = cc; changed = true; }
+          }
+        }
+      }
+      if (c < bestC) { bestC = c; best = order; }
+    }
+    const r = simulate(best, m, stops, dep);
+    return { order: r.seq, unscheduled: r.unscheduled, finish: r.finish };
+  }
+
   // ---------- Formatting ----------
   const fmtMiles = (m) => `${(m / 1609.34).toFixed(m < 16093 ? 1 : 0)} mi`;
   function fmtDur(sec) {
@@ -188,7 +332,10 @@
     return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }
 
-  const api = { serviceMinutes, haversine, pathCost, solve, parseCSV, rowsToStops, yesNo, fmtMiles, fmtDur, fmtClock };
+  const api = {
+    serviceMinutes, haversine, pathCost, solve, parseCSV, rowsToStops, yesNo, fmtMiles, fmtDur, fmtClock,
+    locationService, DAYS, parseClock, parseDayHours, is247, openWindows, earliestStart, simulate, scheduleRoute,
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SN = api;
 })(typeof window !== 'undefined' ? window : globalThis);
