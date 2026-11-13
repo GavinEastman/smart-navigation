@@ -469,17 +469,11 @@ async function addLocationsToRoute(locs, fromProfile = false) {
     const { data: routes } = await sb.from('routes').select('id,name,route_date').order('route_date', { ascending: false }).limit(10);
     openSheet(`<h2>Add to which route?</h2><div class="sub">${esc(locs.map((l) => l.name).join(', '))}</div>
       ${(routes || []).map((r) => `<button class="btn secondary block mt" data-rid="${r.id}">${esc(r.name)} <span class="hint">· ${esc(fmtDate(r.route_date))}</span></button>`).join('')}
-      <button class="btn primary block mt" id="arNew">+ New route for today</button>
+      <button class="btn primary block mt" id="arNew">+ New route</button>
       <button class="btn secondary block mt" id="arClose">Cancel</button>`, (el) => {
       el.querySelector('#arClose').onclick = closeSheet;
       el.querySelectorAll('[data-rid]').forEach((b) => b.onclick = async () => { closeSheet(); await openRoute(b.dataset.rid); addLocationsToRoute(locs); });
-      el.querySelector('#arNew').onclick = async () => {
-        closeSheet();
-        const d = todayISO();
-        const { data, error } = await sb.from('routes').insert({ name: `Route – ${fmtDate(d)}`, route_date: d }).select('*').single();
-        if (dbErr(error, 'Creating route')) return;
-        await openRoute(data.id); addLocationsToRoute(locs);
-      };
+      el.querySelector('#arNew').onclick = () => { closeSheet(); newRoute(() => addLocationsToRoute(locs)); };
     });
     return;
   }
@@ -488,7 +482,7 @@ async function addLocationsToRoute(locs, fromProfile = false) {
   if (!fresh.length) { toast('Already on this route.'); return; }
   const n = await addStops(fresh.map((l) => ({
     location_id: l.id, name: l.name, address: locAddress(l) || l.name, phone: l.phone || '',
-    lat: l.lat, lng: l.lng, rt_tasks: Array(rtCountOf(l)).fill('None'),
+    lat: l.lat, lng: l.lng, rt_tasks: Array(rtCountOf(l)).fill('Fill'),
   })));
   if (n) toast(`Added ${n} location${n > 1 ? 's' : ''}${fresh.length < locs.length ? ` (${locs.length - fresh.length} already on route)` : ''}`);
 }

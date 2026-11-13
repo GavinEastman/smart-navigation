@@ -244,3 +244,17 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--lime); bord
 [data-theme=dark] .ok-box { background: #2a3a12; color: var(--lime); }
 .act-row { padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .act-row .w { color: var(--muted); font-size: 12px; }
+
+/* ---- v1.3: start bar ---- */
+.start-bar { display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; }
+.start-bar .sb-text { flex: 1; font-size: 14px; }
+.start-bar .hint { margin-top: 2px; font-size: 12px; }
+
+/* ---- v1.4: route sections ---- */
+.sec-title { font-size: 12px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin: 8px 2px 0; }
+.route-card.current { border: 2px solid var(--lime); }
+.route-card .go { font-weight: 800; color: var(--green); font-size: 14px; }
+[data-theme=dark] .route-card .go { color: var(--lime); }
+.mt-s { margin-top: 8px; }
+#vRoute.readonly .search-box, #vRoute.readonly .route-page > .row.wrap, #vRoute.readonly .opt-row,
+#vRoute.readonly #nextCard, #vRoute.readonly #geoStatus { display: none !important; }

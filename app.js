@@ -149,35 +149,85 @@ document.addEventListener('visibilitychange', async () => {
 // ======================================================================
 async function loadRoutes() {
   const { data, error } = await sb.from('routes')
-    .select('id,name,route_date,collectors,total_distance,total_drive,stops(status)')
+    .select('id,name,route_date,collectors,total_distance,total_drive,start_time,started_at,completed_at,created_at,stops(status)')
     .order('route_date', { ascending: false }).order('created_at', { ascending: false });
   if (dbErr(error, 'Loading routes')) return;
   S.routes = data || [];
   renderRoutes();
 }
 
-function renderRoutes() {
-  const list = $('routesList');
-  $('routesEmpty').classList.toggle('hidden', S.routes.length > 0);
-  list.innerHTML = S.routes.map((r) => {
-    const total = r.stops.length, done = r.stops.filter((s) => s.status !== 'pending').length;
-    const pct = total ? Math.round((done / total) * 100) : 0;
-    const bits = [`${total} stop${total === 1 ? '' : 's'}`];
-    if (r.total_distance) bits.push(SN.fmtMiles(r.total_distance));
-    if (r.total_drive) bits.push(SN.fmtDur(r.total_drive) + ' driving');
-    return `<div class="route-card" data-id="${r.id}">
-      <div class="row between"><div class="name">${esc(r.name)}</div><span class="tag">${esc(fmtDate(r.route_date))}</span></div>
-      <div class="meta">${bits.join(' · ')}${total ? ` · ${done}/${total} done` : ''}</div>
-      <div class="progress"><div style="width:${pct}%"></div></div>
-    </div>`;
-  }).join('');
+function routeCard(r) {
+  const total = r.stops.length, done = r.stops.filter((s) => s.status !== 'pending').length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const bits = [`${total} stop${total === 1 ? '' : 's'}`];
+  if (r.total_distance) bits.push(SN.fmtMiles(r.total_distance));
+  if (r.total_drive) bits.push(SN.fmtDur(r.total_drive) + ' driving');
+  let badge;
+  if (r.completed_at) badge = `<span class="tag done">✔ Completed</span>`;
+  else if (r.started_at) badge = `<span class="tag key">▶ In progress · since ${SN.fmtClock(new Date(r.started_at))}</span>`;
+  else badge = `<span class="tag">Planned${r.start_time ? ' · ' + SN.fmtClock(new Date(`2000-01-01T${r.start_time}`)) : ''}</span>`;
+  return `<div class="route-card ${r.completed_at ? '' : 'current'}" data-id="${r.id}">
+    <div class="row between"><div class="name">${esc(r.name)}</div><span class="tag">${esc(fmtDate(r.route_date))}</span></div>
+    <div class="meta">${bits.join(' · ')}${total ? ` · ${done}/${total} done` : ''}</div>
+    <div class="row between mt-s">${badge}${r.completed_at ? '' : '<span class="go">Continue ›</span>'}</div>
+    <div class="progress"><div style="width:${pct}%"></div></div>
+  </div>`;
 }
 
-async function newRoute() {
-  const d = todayISO();
-  const { data, error } = await sb.from('routes').insert({ name: `Route – ${fmtDate(d)}`, route_date: d }).select('*').single();
-  if (dbErr(error, 'Creating route')) return;
-  openRoute(data.id);
+function renderRoutes() {
+  // Top: routes that aren't finished yet (always kept, so you can pick up where you left off).
+  // Below: only routes that were completed AND saved. ("Don't save" deletes them.)
+  const current = S.routes.filter((r) => !r.completed_at)
+    .sort((a, b) => (b.started_at ? 1 : 0) - (a.started_at ? 1 : 0) || String(b.route_date).localeCompare(a.route_date));
+  const saved = S.routes.filter((r) => r.completed_at)
+    .sort((a, b) => String(b.completed_at).localeCompare(a.completed_at));
+  $('routesEmpty').classList.toggle('hidden', S.routes.length > 0);
+  $('routesList').innerHTML =
+    (current.length ? `<div class="sec-title">Current route${current.length > 1 ? 's' : ''}</div>${current.map(routeCard).join('')}` : '')
+    + (saved.length ? `<div class="sec-title">Saved routes</div>${saved.map(routeCard).join('')}` : '');
+}
+
+function defaultStartTime() {
+  // Next quarter hour from now; before 7 AM suggest 7:00.
+  const d = new Date();
+  if (d.getHours() < 7) return '07:00';
+  const m = Math.ceil((d.getHours() * 60 + d.getMinutes() + 1) / 15) * 15;
+  if (m >= 1440) return '07:00';
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/** New route pop-up: how many collectors, and when the route will start. */
+function newRoute(after) {
+  let collectors = 1;
+  openSheet(`<h2>New route</h2>
+    <div class="sub">A couple of quick questions before you add stops.</div>
+    <div class="lbl">How many collectors are with you today?</div>
+    ${seg('nrCollectors', [[1, '1'], [2, '2'], [3, '3']], 1)}
+    <div class="row gap6">
+      <div style="flex:1"><label class="lbl" for="nrTime">What time will you start the route?</label><input id="nrTime" type="time" value="${defaultStartTime()}"></div>
+    </div>
+    <label class="lbl" for="nrDate">Date</label><input id="nrDate" type="date" value="${todayISO()}">
+    <div class="hint">You can change the start time later, and tap <b>▶ Start route</b> when you actually leave the shop.</div>
+    <button class="btn primary block big mt" id="nrCreate">Create route</button>
+    <button class="btn secondary block mt" id="nrCancel">Cancel</button>`, (el) => {
+    el.querySelector('#nrCancel').onclick = closeSheet;
+    el.querySelector('[data-seg="nrCollectors"]').onclick = (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      el.querySelectorAll('[data-seg="nrCollectors"] button').forEach((x) => x.classList.toggle('on', x === b));
+      collectors = +b.dataset.v;
+    };
+    el.querySelector('#nrCreate').onclick = async () => {
+      const d = el.querySelector('#nrDate').value || todayISO();
+      const t = el.querySelector('#nrTime').value || null;
+      if (!t) { toast('Pick a start time.'); return; }
+      closeSheet();
+      const { data, error } = await sb.from('routes')
+        .insert({ name: `Route – ${fmtDate(d)}`, route_date: d, collectors, start_time: t }).select('*').single();
+      if (dbErr(error, 'Creating route')) return;
+      await openRoute(data.id);
+      if (typeof after === 'function') after();
+    };
+  });
 }
 
 // ======================================================================
@@ -500,6 +550,11 @@ function routeDayStart() {
 /** When the truck leaves the shop: start time if set, otherwise now (today) or 7:00 AM (other days). */
 function departure() {
   const r = S.route, day = routeDayStart();
+  if (r.started_at) {
+    // Route already started: plan remaining stops from now (when re-optimizing) — ETAs use started_at
+    const started = new Date(r.started_at);
+    return S.stops.some(isFinished) ? new Date(Math.max(Date.now(), started.getTime())) : started;
+  }
   if (r.start_time) { const [h, mi] = r.start_time.split(':').map(Number); return new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, mi); }
   if (r.route_date === todayISO()) return new Date();
   return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 7, 0);
@@ -512,7 +567,7 @@ function winOf(stop) {
   return SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, routeDayStart());
 }
 
-function unschedReason(win) { return win.unknown ? 'Hours unknown' : "Closed, or can't finish before closing"; }
+function unschedReason() { return "Closed, or can't finish before closing"; }
 
 // ---------- Optimize ----------
 function blockingProblems(stops) {
@@ -595,7 +650,8 @@ function computePlan() {
   if (inOrder.join() !== ids.join() || pendingLocated.some((id) => !known.has(id))) return plan;
   if (legs.items.some((x) => x.s == null)) return plan;
 
-  let clock = r.start_time ? departure() : new Date(legs.dep || legs.at || r.optimized_at);
+  // Start of the day: actual start (▶ Start route) > planned start time > when it was optimized
+  let clock = r.started_at ? new Date(r.started_at) : r.start_time ? departure() : new Date(legs.dep || legs.at || r.optimized_at);
   const byId = Object.fromEntries(S.stops.map((s) => [s.id, s]));
   for (const it of legs.items) {
     const st = byId[it.id];
@@ -692,7 +748,7 @@ function stopExtras(s) {
   if (loc) {
     const g = loc.games_confirmed, rt = rtCountOf(loc);
     if (g != null) out.push(`🎰 ${g}`);
-    if (rt) out.push(`RT ×${rt}${svc.tasks.some((t) => t !== 'None') ? ' (' + svc.tasks.filter((t) => t !== 'None').join(', ') + ')' : ''}`);
+    if (rt) out.push(`RT ×${rt} (${svc.tasks.join(', ')})`);
     if (loc.ach === true) out.push('ACH'); else if (loc.ach === false) out.push('Non-ACH');
     if (loc.access_anytime) out.push(ACCESS_LABEL[loc.access_method || '']);
     if (s.ignore_hours) out.push('⏰ hours ignored today');
@@ -717,6 +773,8 @@ function renderRoute(fit = false) {
     <div class="s"><div class="v">${drive}</div><div class="k">Drive</div></div>
     <div class="s"><div class="v">${plan.valid ? SN.fmtClock(plan.finish) : SN.fmtDur(plan.serviceTotal * 60)}</div><div class="k">${plan.valid ? 'Back at shop' : 'Service'}</div></div>`;
 
+  renderStartBar(plan);
+  $('vRoute').classList.toggle('readonly', !!r.completed_at); // completed routes are view-only
   $('btnKeepOrder').classList.toggle('hidden', total < 1);
   const blocked = blockingProblems(S.stops.filter((s) => !isFinished(s)));
   let head = total ? `${total} stop${total > 1 ? 's' : ''} · ${r.collectors} collector${r.collectors > 1 ? 's' : ''} · leave ${SN.fmtClock(departure())}` : 'No stops yet — search above or add from locations';
@@ -734,7 +792,7 @@ function renderRoute(fit = false) {
     nc.innerHTML = `<div class="lab">NEXT STOP · #${idx}</div>
       <div class="nm">${esc(next.name || next.address.split(',')[0])}</div>
       <div class="ad">${esc(next.address)}</div>
-      <div class="eta">ETA ${SN.fmtClock(plan.eta[next.id])}${w ? ` · opens — start ${SN.fmtClock(w)}` : ''}${plan.late[next.id] ? ' · ⚠️ outside business hours' : ''} · ${svc.minutes} min on site</div>
+      <div class="eta">ETA ${SN.fmtClock(plan.eta[next.id])}${w ? ` · opens ${SN.fmtClock(w)}` : ''}${plan.late[next.id] ? ' · ⚠️ outside business hours' : ''} · ${svc.minutes} min on site</div>
       <div class="row">
         <a class="btn lime" href="${navUrl(next)}" target="_blank" rel="noopener">➤ Navigate</a>
         <button class="btn secondary" data-done="${next.id}">✔ Done</button>
@@ -750,7 +808,7 @@ function renderRoute(fit = false) {
     let side = '';
     if (!isFinished(s)) {
       if (plan.unsched[s.id]) side = `<span class="tag failed">Not scheduled</span>`;
-      else if (plan.valid && plan.eta[s.id]) side = `<div class="t">${SN.fmtClock(plan.eta[s.id])}</div>${plan.wait[s.id] ? `<div>start ${SN.fmtClock(plan.wait[s.id])}</div>` : ''}${plan.late[s.id] ? '<span class="tag warn">Hours</span>' : ''}`;
+      else if (plan.valid && plan.eta[s.id]) side = `<div class="t">${SN.fmtClock(plan.eta[s.id])}</div>${plan.wait[s.id] ? `<div>opens ${SN.fmtClock(plan.wait[s.id])}</div>` : ''}${plan.late[s.id] ? '<span class="tag warn">Hours</span>' : ''}`;
     } else {
       side = s.status === 'done' ? '<span class="tag done">Done</span>' : s.status === 'failed' ? '<span class="tag failed">Failed</span>' : '<span class="tag">Skipped</span>';
     }
@@ -772,6 +830,95 @@ function renderRoute(fit = false) {
   drawMap(fit);
 }
 
+// ---------- Start time & ▶ Start route ----------
+function renderStartBar() {
+  const r = S.route, bar = $('startBar');
+  if (r.completed_at) {
+    bar.innerHTML = `<div class="sb-text">✔ <b>Completed</b> ${esc(new Date(r.completed_at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }))}<div class="hint">Saved route. Use ☰ → Duplicate to run it again.</div></div>
+      <button class="btn secondary sm" id="sbReopen">Reopen</button>`;
+  } else if (r.started_at) {
+    bar.innerHTML = `<div class="sb-text">▶ <b>Started ${SN.fmtClock(new Date(r.started_at))}</b><div class="hint">Times are from when you actually left.</div></div>
+      <button class="btn secondary sm" id="sbUndo">Undo start</button>
+      <button class="btn ok sm" id="sbComplete">✔ Complete</button>`;
+  } else {
+    bar.innerHTML = `<div class="sb-text">🕗 Planned start <b>${SN.fmtClock(departure())}</b><div class="hint">${esc(fmtDate(r.route_date))}</div></div>
+      <button class="btn secondary sm" id="sbChange">Change</button>
+      <button class="btn lime sm" id="sbStart">▶ Start route</button>`;
+  }
+  const ch = $('sbChange'), st = $('sbStart'), un = $('sbUndo');
+  if (ch) ch.onclick = openStartTime;
+  if (st) st.onclick = startRoute;
+  if (un) un.onclick = (e) => twoTap(e.currentTarget, async () => { await updateRoute({ started_at: null }); renderRoute(); toast('Start undone'); });
+  const cp = $('sbComplete'), ro = $('sbReopen');
+  if (cp) cp.onclick = openComplete;
+  if (ro) ro.onclick = async () => { await updateRoute({ completed_at: null }); renderRoute(); toast('Route reopened'); };
+}
+
+function openStartTime() {
+  const r = S.route;
+  openSheet(`<h2>Start time</h2><div class="sub">When do you plan to leave the shop?</div>
+    <label class="lbl" for="stTime">Start time</label><input id="stTime" type="time" value="${esc((r.start_time || defaultStartTime()).slice(0, 5))}">
+    <label class="lbl" for="stDate">Date</label><input id="stDate" type="date" value="${esc(r.route_date)}">
+    <button class="btn primary block mt" id="stTimeSave">Save</button>
+    <button class="btn secondary block mt" id="stTimeCancel">Cancel</button>`, (el) => {
+    el.querySelector('#stTimeCancel').onclick = closeSheet;
+    el.querySelector('#stTimeSave').onclick = async () => {
+      const t = el.querySelector('#stTime').value, d = el.querySelector('#stDate').value || r.route_date;
+      if (!t) { toast('Pick a start time.'); return; }
+      const dateChanged = d !== r.route_date;
+      await updateRoute({ start_time: t, route_date: d });
+      closeSheet(); renderRoute();
+      // Hours depend on the start time/day, so re-plan if a plan exists
+      if (r.legs && S.stops.some((s) => !isFinished(s) && located(s))) {
+        toast(dateChanged ? 'Date changed — re-planning for that day…' : 'Start time changed — updating the plan…');
+        optimize(false);
+      } else toast('Start time saved');
+    };
+  });
+}
+
+function openComplete() {
+  const r = S.route;
+  const total = S.stops.length, done = S.stops.filter((s) => s.status === 'done').length;
+  const left = S.stops.filter((s) => s.status === 'pending').length;
+  openSheet(`<h2>Complete route</h2>
+    <div class="sub">${done} of ${total} stops done${r.started_at ? ` · started ${SN.fmtClock(new Date(r.started_at))}, finished ${SN.fmtClock(new Date())}` : ''}.</div>
+    ${left ? `<div class="warn-box">${left} stop${left > 1 ? 's are' : ' is'} still not marked done.</div>` : ''}
+    <button class="btn primary block big" id="cpSave">💾 Save route</button>
+    <div class="hint">Saved routes stay in <b>My Routes</b> so you can look back at them or duplicate them later.</div>
+    <button class="btn danger block mt" id="cpDiscard">🗑 Don't save</button>
+    <div class="hint">Deletes this route and its stops forever. It can't be undone.</div>
+    <button class="btn secondary block mt" id="cpCancel">Cancel — keep working</button>`, (el) => {
+    el.querySelector('#cpCancel').onclick = closeSheet;
+    el.querySelector('#cpSave').onclick = async () => {
+      await updateRoute({ completed_at: new Date().toISOString() });
+      closeSheet(); S.route = null; show('routes'); toast('Route completed and saved ✔');
+    };
+    el.querySelector('#cpDiscard').onclick = (e) => twoTap(e.currentTarget, async () => {
+      const { error } = await sb.from('routes').delete().eq('id', r.id);
+      if (dbErr(error, 'Delete')) return;
+      closeSheet(); S.route = null; S.stops = []; show('routes'); toast('Route completed — not saved');
+    }, 'Tap again — delete forever');
+  });
+}
+
+async function startRoute() {
+  const r = S.route;
+  if (!S.stops.some((s) => !isFinished(s))) { toast('Add some stops first.'); return; }
+  if (r.route_date !== todayISO()) await updateRoute({ route_date: todayISO() });
+  await updateRoute({ started_at: new Date().toISOString() });
+  renderRoute();
+  const plan = computePlan();
+  if (!plan.valid && S.stops.some((s) => !isFinished(s) && located(s))) {
+    toast('Route started — planning from now…');
+    await optimize(false);
+  } else {
+    // Re-check hours with the real start time; re-plan only if something no longer fits
+    if (Object.keys(plan.late).length) { toast('Route started — some times moved, re-planning…'); await optimize(false); }
+    else toast('Route started ✔ Times updated from now.');
+  }
+}
+
 // ======================================================================
 // Stop sheet
 // ======================================================================
@@ -785,8 +932,9 @@ function hoursToday(loc, date = new Date()) {
   const txt = (loc.hours || {})[key];
   const w = SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, new Date(date.getFullYear(), date.getMonth(), date.getDate()));
   let status;
-  if (w.anytime) status = 'Open 24/7';
-  else if (w.unknown) status = 'Hours unknown';
+  if (w.unknownHours) status = 'Hours unknown';
+  else if (w.anytime) status = 'Open 24/7';
+  else if (w.unknown || w.unknownHours) status = 'Hours unknown';
   else status = w.windows.some(([a, b]) => date >= a && date < b) ? 'Open now' : 'Closed now';
   return { txt: txt || '—', status };
 }
@@ -814,6 +962,7 @@ function openStop(id) {
       ${loc.hours_comment ? `<div class="hint">${esc(loc.hours_comment)}</div>` : ''}
       ${plan.unsched[s.id] ? `<div class="warn-box">Not scheduled: ${esc(plan.unsched[s.id])}.</div>` : ''}
       ${loc.access_anytime ? `<div class="ok-box">${esc(ACCESS_LABEL[loc.access_method || ''])} — this location can be visited any time.</div>` : ''}
+      ${h.status === 'Hours unknown' && !loc.access_anytime ? '<div class="hint">Hours aren\'t filled in yet, so routes treat this location as open any time.</div>' : ''}
       <div class="lbl">Ignore business hours for this stop today</div>
       ${seg('ignore_hours', [['false', 'No'], ['true', 'Yes — we can get in']], !!s.ignore_hours)}
       <div class="hint">Use this when you have a key or door code, or the owner is letting you in. Tap Optimize afterwards.</div>
@@ -978,7 +1127,7 @@ function openRouteSettings() {
     };
     el.querySelector('#rsDup').onclick = async () => {
       busy(true);
-      const { id, created_at, updated_at, owner_id, legs, geometry, total_distance, total_drive, optimized_at, ...rest } = r;
+      const { id, created_at, updated_at, owner_id, legs, geometry, total_distance, total_drive, optimized_at, started_at, completed_at, ...rest } = r;
       const { data: nr, error } = await sb.from('routes').insert({ ...rest, name: `${r.name} (copy)`, route_date: todayISO() }).select('*').single();
       if (dbErr(error, 'Duplicate')) { busy(false); return; }
       const rows = S.stops.map(({ id: _i, created_at: _c, owner_id: _o, route_id: _r, status, status_note, completed_at, ...s }) => ({ ...s, route_id: nr.id }));
@@ -1122,7 +1271,7 @@ function onTeamClick(e) {
 function bind() {
   $('loginForm').onsubmit = login;
   document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => show(b.dataset.go));
-  $('btnNewRoute').onclick = newRoute;
+  $('btnNewRoute').onclick = () => newRoute();
   $('routesList').onclick = (e) => { const c = e.target.closest('.route-card'); if (c) openRoute(c.dataset.id); };
 
   $('btnBack').onclick = () => { S.route = null; show('routes'); };

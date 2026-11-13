@@ -189,7 +189,7 @@
     if (games == null) missing.push('skill game count not confirmed');
     if (ach == null) missing.push('ACH unknown');
     if (!rtCount && payout == null) missing.push('payout tickets unknown');
-    const tasks = Array.from({ length: rtCount || 0 }, (_, i) => (rtTasks && rtTasks[i]) || 'None');
+    const tasks = Array.from({ length: rtCount || 0 }, (_, i) => (rtTasks && rtTasks[i]) || 'Fill'); // default task is Fill
     const G = (games || 0) * 3;
     const RT = tasks.reduce((a, t) => a + (RT_TASK_MIN[t] || 0), 0);
     const A = ach === false ? 7 : 0;
@@ -244,7 +244,9 @@
     for (let d = -1; d <= days; d++) {
       const date = new Date(y, mo, d0 + d);
       const iv = parseDayHours((hours || {})[DAYS[date.getDay()]]);
-      if (iv == null) { if (d === 0) return { unknown: true }; continue; }
+      // Hours not filled in yet: treat as open any time so the stop still gets scheduled,
+      // but remember they're unknown so the app can still say "Hours unknown".
+      if (iv == null) { if (d === 0) return { anytime: true, unknownHours: true }; continue; }
       for (const [o, c] of iv) {
         windows.push([new Date(y, mo, d0 + d, 0, o).getTime(), new Date(y, mo, d0 + d, 0, c).getTime()]);
       }
