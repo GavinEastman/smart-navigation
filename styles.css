@@ -91,7 +91,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--lime); bord
 .seg button:disabled { opacity: .4; }
 
 /* ---- login ---- */
-#vLogin { display: flex; align-items: flex-start; justify-content: center; background: linear-gradient(180deg, var(--green) 0 calc(env(safe-area-inset-top) + 270px), var(--bg) calc(env(safe-area-inset-top) + 270px)); }
+#vLogin { display: flex; align-items: flex-start; justify-content: center; background: #054c88; position: relative; overflow: hidden; }
 .login-wrap { width: 100%; max-width: 400px; padding: 24px; padding-top: calc(env(safe-area-inset-top) + 56px); }
 .login-icon { width: 84px; height: 84px; border-radius: 20px; display: block; margin: 0 auto 10px; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
 .logo { text-align: center; font-weight: 900; font-size: 30px; color: #fff; }
@@ -282,3 +282,28 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .intro-title span { color: #8ebe42; }
 .intro-title.show { opacity: 1; transform: none; }
 .intro-skip { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 22px); color: rgba(243,244,243,.55); font-size: 12px; letter-spacing: .5px; }
+
+/* ---- v1.9: sign-in background, portal, loader, done & complete animations ---- */
+.login-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.login-bg svg { width: 100%; height: 100%; display: block; }
+#vLogin .login-wrap { position: relative; z-index: 1; }
+#vLogin .logo span { color: #8ebe42; }
+#vLogin .logo-sub { color: rgba(243,244,243,.75); }
+#vLogin > .login-wrap > .hint { color: rgba(243,244,243,.8); }
+.login-form { box-shadow: 0 10px 34px rgba(0,0,0,.35); }
+
+.fx { position: fixed; inset: 0; z-index: 8000; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity .3s ease; }
+.fx-passive { pointer-events: none; }
+.fx-dim { background: rgba(0,0,0,.55); }
+.fx-cover { background: #054c88; }
+.fx-cover .fx-art { position: absolute; inset: 0; }
+.fx-cover .fx-art svg { width: 100%; height: 100%; display: block; }
+.fx-center .fx-art { width: min(62vw, 300px); height: min(62vw, 300px); }
+.fx-center .fx-art svg { width: 100%; height: 100%; display: block; }
+.fx-text { margin-top: 18px; font-size: 26px; font-weight: 900; color: #f3f4f3; text-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.fx-out { opacity: 0; }
+.fx-card { background: var(--card); border-radius: 18px; padding: 10px 22px 18px; display: flex; flex-direction: column; align-items: center; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+.fx-card .fx-art.small { width: 170px; height: 170px; }
+.fx-card .fx-art.small svg { width: 100%; height: 100%; }
+.fx-cardtext { font-weight: 800; color: var(--ink); margin-top: -6px; }
+.fx-dim.fx-center:not(.fx-passive) .fx-art { width: min(82vw, 380px); height: min(82vw, 380px); }

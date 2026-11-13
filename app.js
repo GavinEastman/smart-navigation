@@ -98,6 +98,7 @@ function show(name) {
   currentView = name;
   window.scrollTo(0, 0);
   if (name === 'routes') { loadRoutes(); if (!S.locLoaded) loadLocations(); }
+  if (name === 'login') startLoginBackground();
   if (name === 'settings') renderSettings();
   if (name === 'team') loadTeam();
   if (name === 'route' && map) setTimeout(() => map.invalidateSize(), 50);
@@ -132,7 +133,9 @@ async function login(e) {
   if (error) { $('loginErr').textContent = /invalid/i.test(error.message) ? 'Wrong email or password.' : error.message; return; }
   S.session = data.session;
   $('loginPass').value = '';
-  show('routes');
+  // Portal: a ring opens into the map, then My Routes appears underneath
+  await playFx('portal', { ms: 1300, cover: true, midway: 0.75, onMidway: () => show('routes') });
+  if (currentView !== 'routes') show('routes');
 }
 
 // Re-check the account whenever the app comes back to the foreground
@@ -617,7 +620,7 @@ async function optimize(keepOrder = false) {
   if (!pending.length) { toast('No remaining stops with a found address.'); return; }
   const blocked = blockingProblems(pending);
   if (blocked.length) { showBlocked(blocked); return; }
-  busy(true);
+  showLoader(keepOrder ? 'Updating your times…' : 'Finding the best route…');
   try {
     const shop = await getShop();
     if (!shop) { toast("Couldn't find the shop address. Check your connection, or set SHOP_LAT/SHOP_LNG in config.js."); return; }
@@ -659,7 +662,7 @@ async function optimize(keepOrder = false) {
     renderRoute(true);
     if (unsched.length) toast(`${unsched.length} stop${unsched.length > 1 ? 's' : ''} couldn't fit in business hours — see the bottom of the list.`, 5000);
     else toast(keepOrder ? 'Times updated ✔' : 'Route optimized ✔');
-  } finally { busy(false); }
+  } finally { await hideLoader(); }
 }
 
 /** ETAs, waits and warnings. Valid only while the stop order matches the last calculation.
@@ -919,7 +922,9 @@ function openComplete() {
     el.querySelector('#cpCancel').onclick = closeSheet;
     el.querySelector('#cpSave').onclick = async () => {
       await updateRoute({ completed_at: new Date().toISOString() });
-      closeSheet(); S.route = null; show('routes'); toast('Route completed and saved ✔');
+      closeSheet();
+      await playFx('complete', { ms: 2900, text: 'Route complete!', tapSkip: true, dim: true });
+      S.route = null; show('routes'); toast('Route completed and saved ✔');
     };
     el.querySelector('#cpDiscard').onclick = (e) => twoTap(e.currentTarget, async () => {
       const { error } = await sb.from('routes').delete().eq('id', r.id);
@@ -1132,7 +1137,7 @@ function openStop(id) {
       const st = b.dataset.st;
       await updateStop(s, { status: st, status_note: el.querySelector('#stNote').value.trim(), completed_at: st === 'pending' ? null : new Date().toISOString() });
       closeSheet(); renderRoute();
-      if (st === 'done') toast('Marked done ✔');
+      if (st === 'done') { celebrateDone(); toast('Marked done ✔'); }
     });
     el.querySelector('#stNote').onchange = (e) => updateStop(s, { status_note: e.target.value.trim() });
 
@@ -1426,7 +1431,7 @@ function bind() {
     const d = e.target.closest('[data-done]');
     if (d) {
       const s = S.stops.find((x) => x.id === d.dataset.done);
-      if (s) updateStop(s, { status: 'done', completed_at: new Date().toISOString() }).then(() => { renderRoute(); toast('Marked done ✔'); });
+      if (s) { celebrateDone(); updateStop(s, { status: 'done', completed_at: new Date().toISOString() }).then(() => { renderRoute(); toast('Marked done ✔'); }); }
       return;
     }
     if (DRAG.justDropped || DRAG.active) return;
@@ -1462,6 +1467,85 @@ function bind() {
 // ======================================================================
 // Boot
 // ======================================================================
+// ---------- Animations (Lottie AI exports, animated SVG) ----------
+const ANIM_OK = () => !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+const animCache = {};
+let animSeq = 0;
+/** Load an animation and return a fresh <svg> element (ids made unique so several can be on screen at once). */
+async function animSvg(name, cover = false) {
+  if (!animCache[name]) {
+    const res = await fetch(`anim/${name}.svg`);
+    if (!res.ok) throw new Error('anim ' + name);
+    animCache[name] = await res.text();
+  }
+  const p = `a${++animSeq}_`;
+  const txt = animCache[name]
+    .replace(/\bid="([^"]+)"/g, `id="${p}$1"`)
+    .replace(/url\(#([^)]+)\)/g, `url(#${p}$1)`)
+    .replace(/href="#([^"]+)"/g, `href="#${p}$1"`);
+  const box = document.createElement('div');
+  box.innerHTML = txt;
+  const svg = box.querySelector('svg');
+  svg.setAttribute('preserveAspectRatio', cover ? 'xMidYMid slice' : 'xMidYMid meet');
+  return svg;
+}
+function startSvg(svg) { try { svg.setCurrentTime(0); svg.unpauseAnimations(); } catch (e) { /* */ } }
+
+/** Full-screen or centered one-shot animation. Resolves when finished (or tapped, if allowed). */
+async function playFx(name, { ms, cover = false, text = '', tapSkip = false, onMidway, midway = 0.7, dim = false } = {}) {
+  if (!ANIM_OK()) { if (onMidway) onMidway(); return; }
+  let svg;
+  try { svg = await animSvg(name, cover); } catch (e) { if (onMidway) onMidway(); return; }
+  const fx = document.createElement('div');
+  fx.className = `fx ${cover ? 'fx-cover' : 'fx-center'} ${dim ? 'fx-dim' : ''} ${tapSkip ? '' : 'fx-passive'}`;
+  const art = document.createElement('div'); art.className = 'fx-art'; art.appendChild(svg);
+  fx.appendChild(art);
+  if (text) { const t = document.createElement('div'); t.className = 'fx-text'; t.textContent = text; fx.appendChild(t); }
+  document.body.appendChild(fx);
+  startSvg(svg);
+  return new Promise((resolve) => {
+    let done = false;
+    const mid = setTimeout(() => { if (onMidway) onMidway(); }, ms * midway);
+    const end = () => {
+      if (done) return; done = true; clearTimeout(mid); clearTimeout(t1);
+      if (onMidway && !fx.dataset.mid) { /* skipped before midway */ }
+      fx.classList.add('fx-out');
+      setTimeout(() => { fx.remove(); resolve(); }, 320);
+    };
+    const t1 = setTimeout(end, ms);
+    if (tapSkip) fx.onclick = () => { clearTimeout(mid); if (onMidway) onMidway(); end(); };
+  });
+}
+
+// "Finding the best route…" loader for Optimize (shows at least ~1 s so it doesn't flash)
+let loaderEl = null, loaderAt = 0;
+async function showLoader(text) {
+  if (!ANIM_OK()) { busy(true); return; }
+  loaderAt = Date.now();
+  loaderEl = document.createElement('div');
+  loaderEl.className = 'fx fx-center fx-dim';
+  loaderEl.innerHTML = `<div class="fx-card"><div class="fx-art small"></div><div class="fx-cardtext">${esc(text)}</div></div>`;
+  document.body.appendChild(loaderEl);
+  const el = loaderEl;
+  try { const svg = await animSvg('optimizing'); if (el.isConnected) { el.querySelector('.fx-art').appendChild(svg); startSvg(svg); } } catch (e) { /* spinner-less is fine */ }
+}
+async function hideLoader() {
+  if (!loaderEl) { busy(false); return; }
+  const el = loaderEl; loaderEl = null;
+  const wait = 1000 - (Date.now() - loaderAt);
+  if (wait > 0) await sleep(wait);
+  el.classList.add('fx-out'); setTimeout(() => el.remove(), 320);
+}
+
+function celebrateDone() { playFx('done', { ms: 950 }); }
+
+// Moving map behind the sign-in card
+async function startLoginBackground() {
+  const host = $('loginBg');
+  if (!host || host.firstChild || !ANIM_OK()) return;
+  try { const svg = await animSvg('signin-bg', true); host.appendChild(svg); startSvg(svg); } catch (e) { /* plain navy is fine */ }
+}
+
 // ---------- Opening animation: once a day, tap to skip, skipped for "reduce motion" ----------
 async function playIntro() {
   const el = $('intro');
