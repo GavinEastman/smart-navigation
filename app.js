@@ -152,11 +152,31 @@ document.addEventListener('visibilitychange', async () => {
 // ======================================================================
 async function loadRoutes() {
   const { data, error } = await sb.from('routes')
-    .select('id,name,route_date,collectors,total_distance,total_drive,start_time,started_at,completed_at,created_at,stops(status)')
+    .select('*,stops(status)')   // '*' so the list still loads even if an update script hasn't been run yet
     .order('route_date', { ascending: false }).order('created_at', { ascending: false });
   if (dbErr(error, 'Loading routes')) return;
   S.routes = data || [];
   renderRoutes();
+  checkDatabase();
+}
+
+// Warn (instead of silently failing) if one of the Supabase update scripts hasn't been run
+let dbChecked = false;
+async function checkDatabase() {
+  if (dbChecked) return;
+  dbChecked = true;
+  const missing = [];
+  const t = async (table, cols, file) => {
+    const { error } = await sb.from(table).select(cols).limit(1);
+    if (error && /column|does not exist|schema cache/i.test(error.message || '')) missing.push(file);
+  };
+  await t('locations', 'id', '002_locations.sql');
+  await t('routes', 'started_at,completed_at', '003_start_route.sql');
+  await t('stops', 'hours_answer', '004_hours_answer.sql');
+  const el = $('dbWarn');
+  if (!missing.length) { el.classList.add('hidden'); return; }
+  el.innerHTML = `⚠️ <b>Database update needed.</b> In Supabase → SQL Editor, run: ${missing.map((f) => `<code>${f}</code>`).join(', ')}. Until then, starting, completing and saving routes won't work properly.`;
+  el.classList.remove('hidden');
 }
 
 function routeCard(r) {
@@ -605,7 +625,7 @@ function winOf(stop) {
 function closedAtStart(loc) {
   if (!loc || loc.access_anytime) return null;
   const w = SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, routeDayStart());
-  if (w.anytime || w.unknown) return null;
+  if (w.anytime || w.unknown || w.unknownHours) return null;   // 24/7 or no hours on file = get in any time
   const t = departure().getTime();
   if (w.windows.some(([a, b]) => t >= a && t < b)) return null;
   const dayEnd = routeDayStart().getTime() + 86400000;
@@ -1126,20 +1146,33 @@ function openStop(id) {
   if (loc) {
     const h = hoursToday(loc, routeDayStart().toDateString() === new Date().toDateString() ? new Date() : routeDayStart());
     const rt = rtCountOf(loc);
+    const wDay = SN.openWindows(loc.hours, loc.hours_comment, loc.open_24_7, routeDayStart());
+    const noHours = !!wDay.unknownHours;                      // nothing on file for that day
+    const hoursApply = !loc.access_anytime && !wDay.anytime;  // real hours we have to respect
+    const need = needsHoursAnswer(s);
+    const cl = hoursApply ? closedAtStart(loc) : null;
+    const early = !!s.ignore_hours, waitAns = s.hours_answer === 'wait' && !s.ignore_hours;
+    let body;
+    if (!hoursApply) {
+      body = `<div class="ok-box">${loc.access_anytime ? esc(ACCESS_LABEL[loc.access_method || '']) + ' — this location can be visited any time.'
+        : noHours ? 'No hours on file — treated as open 24/7, get in any time.' : 'Open 24/7.'}</div>`;
+    } else {
+      body = `<div class="${need ? 'attn attn-box' : 'hours-q'}">
+        ${need ? '⚠️ <b>Attention needed:</b> ' : ''}${cl ? esc(closedText(cl)) + ` (you start ${esc(SN.fmtClock(departure()))}).` : 'Open at your start time.'}
+        ${plan.unsched[s.id] ? `<div><b>Not scheduled:</b> ${esc(plan.unsched[s.id])}.</div>` : ''}
+        <div class="q">Can you get in outside business hours today?</div>
+        <div class="seg ans-seg">
+          <button type="button" data-ans="early" class="${early ? 'on' : ''}">🔑 Yes, we can get in</button>
+          <button type="button" data-ans="wait" class="${waitAns ? 'on' : ''}">⏰ No, wait till open</button>
+        </div>
+        <div class="hint">Key, door code, or the owner letting you in.</div>
+      </div>`;
+    }
     hoursCard = `<div class="card mt">
       <div class="card-title">Hours</div>
-      <div class="row between"><span>${esc(SN.DAYS[routeDayStart().getDay()].replace(/^./, (c) => c.toUpperCase()))}: <b>${esc(h.txt)}</b></span><span class="tag">${esc(h.status)}</span></div>
+      <div class="row between"><span>${esc(SN.DAYS[routeDayStart().getDay()].replace(/^./, (c) => c.toUpperCase()))}: <b>${esc(noHours ? 'not on file' : h.txt)}</b></span>${noHours ? '' : `<span class="tag">${esc(h.status)}</span>`}</div>
       ${loc.hours_comment ? `<div class="hint">${esc(loc.hours_comment)}</div>` : ''}
-      ${plan.unsched[s.id] ? `<div class="warn-box">Not scheduled: ${esc(plan.unsched[s.id])}.</div>` : ''}
-      ${loc.access_anytime ? `<div class="ok-box">${esc(ACCESS_LABEL[loc.access_method || ''])} — this location can be visited any time.</div>` : ''}
-      ${needsHoursAnswer(s) ? `<div class="attn attn-box">⚠️ <b>Attention needed:</b> ${esc(closedText(closedAtStart(loc)))} (you start ${esc(SN.fmtClock(departure()))}). Can you get in early?
-        <div class="actions" style="grid-template-columns:1fr 1fr;margin-bottom:0">
-          <button class="btn ok" data-ans="early">🔑 Yes, we can get in</button>
-          <button class="btn secondary" data-ans="wait">⏰ No, wait till open</button></div></div>` : ''}
-      ${h.status === 'Hours unknown' && !loc.access_anytime ? '<div class="hint">Hours aren\'t filled in yet, so routes treat this location as open any time.</div>' : ''}
-      <div class="lbl">Ignore business hours for this stop today</div>
-      ${seg('ignore_hours', [['false', 'No'], ['true', 'Yes — we can get in']], !!s.ignore_hours)}
-      <div class="hint">Use this when you have a key or door code, or the owner is letting you in. Tap Optimize afterwards.</div>
+      ${body}
     </div>`;
     const gamesTxt = loc.games_confirmed != null ? `${loc.games_confirmed}` : `<span class="err">Not confirmed</span> <span class="hint">(device list shows ${gameCountOf(loc)})</span>`;
     const tri = (v, y, n) => (v === true ? y : v === false ? n : '<span class="err">Unknown</span>');
@@ -1200,7 +1233,7 @@ function openStop(id) {
     el.querySelector('#stNote').onchange = (e) => updateStop(s, { status_note: e.target.value.trim() });
     el.querySelectorAll('[data-ans]').forEach((b) => b.onclick = async () => {
       await answerHours(s, b.dataset.ans === 'early');
-      closeSheet(); toast(b.dataset.ans === 'early' ? 'Got it — hours ignored for this stop' : 'Got it — it will wait until opening');
+      closeSheet(); toast(b.dataset.ans === 'early' ? 'Got it — hours ignored for this stop. Tap Optimize to update.' : 'Got it — it will wait until opening. Tap Optimize to update.');
     });
 
     el.querySelectorAll('[data-seg]').forEach((sg) => sg.onclick = async (e) => {

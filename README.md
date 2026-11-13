@@ -18,7 +18,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 - **Location editor:** change any field, add or remove contacts and machines, set hours, and set a map point from where you're standing. If two people edit at once, the second save is refused with a "reload" message, so nobody overwrites anyone.
 - **Adding stops:** use **📍 From locations** (multi-select), search by location name, or use any address, a pasted list, or an Excel/CSV file.
 - **Business hours:** Optimize only plans a location while it's open and the service can finish before closing. After-midnight closings count for the day before, and split hours work. It visits open stops first. Locations whose hours aren't filled in yet still say **Hours unknown**, but routes treat them as open any time. A stop it can't fit (closed that day, or can't finish before closing) is marked **Not scheduled**.
-- **⚠️ Attention needed:** if a location isn't open yet at your start time, its stop pulses orange and asks "Can you get in early?" (🔑 Yes, we can get in / ⏰ No, wait till open). **Optimize won't run until it's answered.** Locations that are already open, open 24/7, have no hours on file, or are marked "access any time" never ask.
+- **⚠️ Attention needed:** if a location isn't open yet at your start time, its stop pulses orange and asks "Can you get in early?" (🔑 Yes, we can get in / ⏰ No, wait till open). **Optimize won't run until it's answered.** Locations that are already open, open 24/7, have no hours on file (treated as open 24/7), or are marked "access any time" never ask. Each stop has one **Hours** section with the question and a 🔑 Yes / ⏰ No choice.
 - **Hours bypass:**
   - *Per location:* "We can get in any time" (🔑 key, 🔢 door code, or 📞 call owner). That location is always schedulable. The code itself is never stored.
   - *Per stop:* "Ignore business hours for this stop today."
@@ -73,7 +73,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 5. After 1–2 minutes your app is at **`https://YOUR-GITHUB-NAME.github.io/smart-navigation/`**.
 
 ### 7. Add your 13 coworkers
-1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.0" line 7 times quickly**. Manage Team opens.
+1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.1" line 7 times quickly**. Manage Team opens.
    There's no button for it anywhere. For anyone else, tapping that line does nothing, and the server refuses them too.
 2. For each person, enter their name and email, tap **Generate** for a password, then tap **Create account**. Use **Copy** to send them their login.
 
@@ -96,10 +96,10 @@ It opens full-screen with the Smart Navigation icon, like a regular app.
 2. **GitHub → Add file → Upload files.** Upload `index.html`, `app.js`, `logic.js`, `locations.js`, `styles.css`, `sw.js`, `README.md`, then click **Commit changes**.
 3. Fully close and reopen the app. The bottom of Settings should say **v2.0**.
 
-## Update 2.0 — attention needed (do this once)
+## Update 2.0 / 2.1 — attention needed (do this once)
 1. **Supabase → SQL Editor → New query.** Paste `supabase/004_hours_answer.sql` (two short lines) and click **Run**. Also run `003_start_route.sql` if you never did.
 2. **GitHub → Add file → Upload files.** Upload `index.html`, `app.js`, `locations.js`, `styles.css`, `sw.js`, `README.md`, plus the `anim` folder if you haven't uploaded it since v1.9. Then click **Commit changes**.
-3. Refresh. Settings should say **v2.0**.
+3. Refresh. Settings should say **v2.1**. If My Routes shows an orange **"Database update needed"** box, run the SQL file(s) it names. Your routes are safe; they just can't be started or completed until then.
 
 ## Good to know
 - **Removing someone** (hidden Manage Team → Remove) takes effect immediately. Their routes are deleted, and the app signs them out the next time it's opened or brought back on screen.

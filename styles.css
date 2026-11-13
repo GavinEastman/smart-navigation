@@ -321,3 +321,10 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 .stop.needs-attn { border: 2px solid #d97706; animation: attnPulse 1.8s ease-in-out infinite; }
 .attn-card { border: 2px solid #fdba74; }
 @media (prefers-reduced-motion: reduce) { .route-card.current, .stop.needs-attn { animation: none; } }
+
+/* ---- v2.1: single hours question ---- */
+.hours-q { background: var(--chip); border-radius: 10px; padding: 10px 12px; margin: 8px 0; font-size: 14px; }
+.hours-q .q, .attn-box .q { font-weight: 800; margin: 8px 0 6px; }
+.ans-seg button { font-size: 13px; }
+.attn-box .ans-seg { background: rgba(255,255,255,.6); }
+#dbWarn code { background: rgba(0,0,0,.08); padding: 1px 5px; border-radius: 5px; }
