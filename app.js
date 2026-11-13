@@ -75,10 +75,48 @@ function dbErr(error, what = 'Save') {
 // Bottom sheet
 function openSheet(html, mount) {
   $('sheetBody').innerHTML = html;
-  $('sheet').classList.remove('hidden');
+  const box = $('sheet').querySelector('.sheet-box');
+  box.style.transition = ''; box.style.transform = ''; box.scrollTop = 0;
+  $('sheet').classList.remove('hidden', 'closing');
   if (mount) mount($('sheetBody'));
 }
-function closeSheet() { $('sheet').classList.add('hidden'); $('sheetBody').innerHTML = ''; }
+function closeSheet() {
+  const sh = $('sheet'), box = sh.querySelector('.sheet-box');
+  if (sh.classList.contains('hidden')) return;
+  box.style.transition = 'transform .22s ease'; box.style.transform = 'translateY(100%)';
+  sh.classList.add('closing');
+  setTimeout(() => {
+    sh.classList.add('hidden'); sh.classList.remove('closing');
+    box.style.transition = ''; box.style.transform = '';
+    $('sheetBody').innerHTML = '';
+  }, 220);
+}
+
+// Grab the handle at the top of any pop-up and pull it down to close it
+function initSheetDrag() {
+  const grab = $('sheetGrab'), box = $('sheet').querySelector('.sheet-box');
+  let startY = null, lastY = 0, lastT = 0, vel = 0, id = null;
+  grab.addEventListener('pointerdown', (e) => {
+    startY = e.clientY; lastY = e.clientY; lastT = performance.now(); vel = 0; id = e.pointerId;
+    box.style.transition = 'none';
+    try { grab.setPointerCapture(id); } catch (err) { /* */ }
+  });
+  grab.addEventListener('pointermove', (e) => {
+    if (startY == null || e.pointerId !== id) return;
+    const dy = Math.max(0, e.clientY - startY);
+    const now = performance.now(); vel = (e.clientY - lastY) / Math.max(1, now - lastT); lastY = e.clientY; lastT = now;
+    box.style.transform = `translateY(${dy}px)`;
+  });
+  const end = (e) => {
+    if (startY == null || (e && e.pointerId !== id)) return;
+    const dy = Math.max(0, lastY - startY);
+    startY = null;
+    if (dy > 90 || vel > 0.6) closeSheet();
+    else { box.style.transition = 'transform .2s ease'; box.style.transform = ''; }
+  };
+  grab.addEventListener('pointerup', end);
+  grab.addEventListener('pointercancel', end);
+}
 
 function fmtDate(d) {
   if (!d) return '';
@@ -109,18 +147,24 @@ function show(name) {
 // ======================================================================
 async function initAuth() {
   if (!CONFIGURED) { $('setupWarn').classList.remove('hidden'); show('login'); return; }
+  // The saved sign-in is read straight from the phone/browser, so this is instant —
+  // signed-in people go straight to My Routes and never see the sign-in screen.
   const { data } = await sb.auth.getSession();
   S.session = data.session;
   sb.auth.onAuthStateChange((evt, session) => {
     S.session = session;
     if (!session && currentView !== 'login') { show('login'); }
   });
-  if (S.session) {
-    // Make sure the account still exists (removed accounts are kicked out)
-    const { error } = await sb.auth.getUser();
-    if (error) { await sb.auth.signOut(); S.session = null; }
-  }
   show(S.session ? 'routes' : 'login');
+  document.body.classList.remove('booting');
+  if (S.session) {
+    // In the background: make sure the account still exists (removed accounts are signed out)
+    sb.auth.getUser().then(async ({ error }) => {
+      if (error && /not found|invalid|expired|jwt|does not exist/i.test(error.message || '')) {
+        await sb.auth.signOut(); S.session = null; show('login'); toast('Please sign in again.');
+      }
+    });
+  }
 }
 
 async function login(e) {
@@ -584,6 +628,10 @@ async function getShop() {
 function locOf(stop) { return stop && stop.location_id ? S.locById.get(stop.location_id) || null : null; }
 function rtCountOf(loc) { return (loc.devices || []).filter((d) => /redemption/i.test(d.category)).length; }
 function gameCountOf(loc) { return (loc.devices || []).filter((d) => /skill/i.test(d.category)).length; }
+// Skill games: an entered number wins; otherwise the machines on the equipment list count automatically.
+function gamesOf(loc) { return loc.games_confirmed != null ? loc.games_confirmed : gameCountOf(loc); }
+// ACH: most locations are ACH, so anything not marked Non-ACH counts as ACH.
+function achOf(loc) { return loc.ach !== false; }
 
 /** { minutes, missing[], tasks[] } — location stops use the strict rules; other stops use "minutes on site". */
 function svcOf(stop) {
@@ -591,7 +639,7 @@ function svcOf(stop) {
   const collectors = (S.route && S.route.collectors) || 1;
   if (!loc) return { minutes: Number(stop.service_override) || 0, missing: [], tasks: [] };
   return SN.locationService({
-    games: loc.games_confirmed, ach: loc.ach, payout: loc.payout_tickets,
+    games: gamesOf(loc), ach: achOf(loc), payout: loc.payout_tickets,
     rtCount: rtCountOf(loc), rtTasks: stop.rt_tasks || [],
   }, collectors);
 }
@@ -810,8 +858,8 @@ function drawMap(fit) {
   mapLayer.clearLayers();
   const pts = [];
   const r = S.route;
-  if (r.geometry && r.geometry.length > 1) L.polyline(r.geometry, { color: '#B6DB3C', weight: 6, opacity: 0.95 }).addTo(mapLayer);
-  if (r.geometry && r.geometry.length > 1) L.polyline(r.geometry, { color: '#123D31', weight: 2, opacity: 0.9 }).addTo(mapLayer);
+  if (r.geometry && r.geometry.length > 1) L.polyline(r.geometry, { color: '#8ebe42', weight: 6, opacity: 0.95 }).addTo(mapLayer);
+  if (r.geometry && r.geometry.length > 1) L.polyline(r.geometry, { color: '#054c88', weight: 2, opacity: 0.9 }).addTo(mapLayer);
   const shop = cachedShop() || (r.legs && r.legs.start);
   if (shop) {
     L.marker([shop.lat, shop.lng], { icon: pinIcon('start', '🏠'), zIndexOffset: -100 })
@@ -846,10 +894,10 @@ function stopExtras(s) {
   const loc = locOf(s), out = [];
   const svc = svcOf(s);
   if (loc) {
-    const g = loc.games_confirmed, rt = rtCountOf(loc);
-    if (g != null) out.push(`🎰 ${g}`);
+    const g = gamesOf(loc), rt = rtCountOf(loc);
+    out.push(`🎰 ${g}`);
     if (rt) out.push(`RT ×${rt} (${svc.tasks.join(', ')})`);
-    if (loc.ach === true) out.push('ACH'); else if (loc.ach === false) out.push('Non-ACH');
+    out.push(achOf(loc) ? 'ACH' : 'Non-ACH');
     if (loc.access_anytime) out.push(ACCESS_LABEL[loc.access_method || '']);
     if (s.ignore_hours) out.push('⏰ hours ignored today');
   }
@@ -1174,13 +1222,13 @@ function openStop(id) {
       ${loc.hours_comment ? `<div class="hint">${esc(loc.hours_comment)}</div>` : ''}
       ${body}
     </div>`;
-    const gamesTxt = loc.games_confirmed != null ? `${loc.games_confirmed}` : `<span class="err">Not confirmed</span> <span class="hint">(device list shows ${gameCountOf(loc)})</span>`;
+    const gamesTxt = `${gamesOf(loc)}`;
     const tri = (v, y, n) => (v === true ? y : v === false ? n : '<span class="err">Unknown</span>');
     svcCard = `<div class="card">
       <div class="card-title">Service time</div>
       <div class="kv">
         <span class="k">Skill games</span><span>${gamesTxt}</span>
-        <span class="k">ACH</span><span>${tri(loc.ach, 'ACH', 'Non-ACH')}</span>
+        <span class="k">ACH</span><span>${achOf(loc) ? 'ACH' : 'Non-ACH'}</span>
         <span class="k">Payout tickets</span><span>${rt ? 'No (has RT)' : tri(loc.payout_tickets, 'Yes', 'No')}</span>
         <span class="k">Redemption terminals</span><span>${rt}</span>
       </div>
@@ -1554,6 +1602,7 @@ function bind() {
   $('addUserForm').onsubmit = addUser;
   bindLocations();
   initStopDrag();
+  initSheetDrag();
   $('btnGenPass').onclick = () => { $('nuPass').value = genPassword(); };
   $('teamList').onclick = onTeamClick;
   $('btnTeamRefresh').onclick = loadTeam;

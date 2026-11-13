@@ -1,6 +1,6 @@
 // Keeps the app itself cached so it opens fast on a weak signal.
 // Logins, routes, address search, routing and map tiles always use the network.
-const CACHE = 'smartnav-v2.1';
+const CACHE = 'smartnav-v2.3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'logic.js', 'locations.js', 'config.js', 'manifest.json',
   'icons/icon-180.png', 'anim/intro.svg', 'anim/signin-bg.svg', 'anim/portal.svg', 'anim/optimizing.svg', 'anim/done.svg', 'anim/complete.svg', 'icons/icon-192.png', 'icons/icon-512.png',

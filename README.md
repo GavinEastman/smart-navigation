@@ -24,11 +24,13 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
   - *Per stop:* "Ignore business hours for this stop today."
 - **Strict service time:** skill games ×3, each RT's task (**Fill 5 is the default**, Swap 10, None 0, summed per terminal), Non-ACH 7, and payout tickets 12 (only without an RT).
   - Crew 1 = everything. Crew 2 = everything except RT. Crew 3 = half of everything, rounded up.
-  - If a location's game count, ACH or payout setting is **unknown, Optimize is blocked** until someone confirms it. A "Fix these first" list takes you straight there.
+  - **Skill games count automatically** from the machines on the location's equipment list, and **every location is ACH unless someone marks it Non-ACH**. Anyone can change either on the location's page.
+  - Only an unknown **payout tickets** setting (at locations without an RT) blocks Optimize. A "Fix these first" list takes you straight there.
 - **Live ETAs:** an ETA and start time for each stop (including waits for opening), and the time you'll be back at the shop. Marking a stop **Done** shifts the rest of the day's times to match.
 - **Activity log:** ⚙︎ → Recent location changes shows who changed what.
 - **Navigation:** one tap to Navigate (Apple Maps, Google Maps or Waze), plus Call, Done / Failed / Skip with a note.
-- **Look:** dark mode, and a link to My Work Orders – SMART.
+- **Look:** SMART colors throughout — navy `#054c88`, forest green `#347147`, light green `#8ebe42`, off-white `#f3f4f3`, black — plus dark mode and a link to My Work Orders – SMART. On a computer, buttons and cards light up when you hover over them. Pop-ups close by pulling their top handle down.
+- **Stay signed in:** reopening or refreshing goes straight to My Routes; the sign-in screen only appears after **Sign out**.
 - **Manage Team (hidden, only you):** add, reset, rename and remove accounts, plus the one-time location import.
 
 ---
@@ -73,7 +75,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 5. After 1–2 minutes your app is at **`https://YOUR-GITHUB-NAME.github.io/smart-navigation/`**.
 
 ### 7. Add your 13 coworkers
-1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.1" line 7 times quickly**. Manage Team opens.
+1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.3" line 7 times quickly**. Manage Team opens.
    There's no button for it anywhere. For anyone else, tapping that line does nothing, and the server refuses them too.
 2. For each person, enter their name and email, tap **Generate** for a password, then tap **Create account**. Use **Copy** to send them their login.
 
@@ -88,7 +90,7 @@ It opens full-screen with the Smart Navigation icon, like a regular app.
 1. **Supabase → SQL Editor → New query.** Paste all of `supabase/002_locations.sql` and click **Run**. Approve the warning if one appears. It should end with "Success". It's safe to run twice.
 2. **GitHub → your repo → Add file → Upload files.** Drag in these files from this folder: `index.html`, `app.js`, `logic.js`, `locations.js` (new), `styles.css`, `sw.js`, `config.js`, `README.md`. Then click **Commit changes**.
 3. Open the app and sign in as yourself. Go to ⚙︎ Settings and tap the **"Smart Navigation v1.x"** line at the bottom 7 times. In **Import locations**, choose `source.json` from your SMART-Navigation **data** folder. In about 30 seconds you should see **543 locations, 430 contacts, 2538 devices**. Import only runs while the list is empty, so it can't overwrite anyone's edits.
-4. **Before routing a location,** confirm its skill game count and ACH (and payout tickets if it has no RT) on its profile. Each takes one tap.
+4. Skill games and ACH fill themselves in. Only locations **without an RT** need payout tickets set (one tap on the location's page) before they can be optimized.
    ⚠️ Never upload `source.json` or the spreadsheet to GitHub: that site is public. The import sends the data straight to your private database.
 
 ## Update 1.3 → 1.6 — start / complete / save routes, Fill default, new-route settings, delete button, drag to reorder (do this once)

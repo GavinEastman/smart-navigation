@@ -66,7 +66,7 @@ function matchLocations(q) {
 
 function locMissing(l) {
   const rt = rtCountOf(l);
-  return SN.locationService({ games: l.games_confirmed, ach: l.ach, payout: l.payout_tickets, rtCount: rt, rtTasks: [] }, 1).missing;
+  return SN.locationService({ games: gamesOf(l), ach: achOf(l), payout: l.payout_tickets, rtCount: rt, rtTasks: [] }, 1).missing;
 }
 
 async function saveLocCoords(loc, g) {
@@ -188,13 +188,12 @@ function renderLocation() {
       <div class="card-title">Service settings</div>
       ${miss.length ? `<div class="warn-box">Needed before this stop can be optimized: ${miss.map(esc).join(', ')}.</div>` : ''}
       <div class="kv">
-        <span class="k">Skill games</span><span>${l.games_confirmed != null ? l.games_confirmed + ' (confirmed)' : `<span class="err">Not confirmed</span>`}</span>
+        <span class="k">Skill games</span><span>${gamesOf(l)}${l.games_confirmed == null ? ' <span class="hint">(from machine list)</span>' : ''}</span>
         <span class="k">Redemption terminals</span><span>${rt}</span>
-        <span class="k">ACH</span><span>${tri(l.ach, 'ACH', 'Non-ACH')}</span>
+        <span class="k">ACH</span><span>${achOf(l) ? 'ACH' : 'Non-ACH'}</span>
         <span class="k">Payout tickets</span><span>${rt ? 'No (has RT)' : tri(l.payout_tickets, 'Yes', 'No')}</span>
       </div>
-      ${l.games_confirmed == null || l.games_confirmed !== games ? `<button class="btn secondary block mt" id="lpConfirm">✔ Confirm ${games} skill game${games === 1 ? '' : 's'} (from device list)</button>` : ''}
-      <div class="lbl">ACH</div>${seg('ach', [['true', 'ACH'], ['false', 'Non-ACH'], ['', 'Unknown']], l.ach == null ? '' : String(l.ach))}
+      <div class="lbl">ACH</div>${seg('ach', [['true', 'ACH'], ['false', 'Non-ACH']], String(achOf(l)))}
       ${rt ? '' : `<div class="lbl">Payout tickets</div>${seg('payout_tickets', [['true', 'Yes'], ['false', 'No'], ['', 'Unknown']], l.payout_tickets == null ? '' : String(l.payout_tickets))}`}
     </div>
 
@@ -233,8 +232,6 @@ function renderLocation() {
   `;
 
   $('lpAdd').onclick = () => addLocationsToRoute([l], true);
-  const conf = $('lpConfirm');
-  if (conf) conf.onclick = () => quickSave(l, { games_confirmed: games }, `Confirmed ${games} skill games`);
   $('locBody').querySelectorAll('[data-seg]').forEach((sg) => sg.onclick = (e) => {
     const b = e.target.closest('button'); if (!b) return;
     const v = b.dataset.v === '' ? null : b.dataset.v === 'true';
@@ -318,9 +315,9 @@ function renderEditor() {
     <div class="card">
       <div class="card-title">Service settings</div>
       <div class="svc"><span class="lb">Skill games (confirmed)</span>
-        <div class="stepper"><button type="button" id="gMinus">−</button><span id="gVal">${d.games_confirmed ?? '?'}</span><button type="button" id="gPlus">+</button></div></div>
-      <button type="button" class="btn secondary sm" id="gUnset">Mark as not confirmed</button>
-      <div class="lbl">ACH</div>${seg('ach', [['true', 'ACH'], ['false', 'Non-ACH'], ['', 'Unknown']], d.ach == null ? '' : String(d.ach))}
+        <div class="stepper"><button type="button" id="gMinus">−</button><span id="gVal">${gamesOf(d)}</span><button type="button" id="gPlus">+</button></div></div>
+      <div class="hint" id="gHint">${d.games_confirmed == null ? 'Automatic — matches the skill games in the equipment list below.' : 'Set by hand.'} <a href="#" id="gAuto">Match machine list</a></div>
+      <div class="lbl">ACH</div>${seg('ach', [['true', 'ACH'], ['false', 'Non-ACH']], String(achOf(d)))}
       <div class="lbl">Payout tickets${rt ? ' (not allowed with an RT)' : ''}</div>${seg('payout_tickets', [['true', 'Yes'], ['false', 'No'], ['', 'Unknown']], rt ? 'false' : d.payout_tickets == null ? '' : String(d.payout_tickets), rt)}
     </div>
 
@@ -390,10 +387,10 @@ function renderEditor() {
   $('eAddContact').onclick = () => { d.contacts.push({ name: '', phone: '', email: '', role: '', extra: {} }); renderEditorKeep(); };
   $('eAddGame').onclick = () => { d.devices.push({ category: 'Skill Game', type: '', extra: {} }); renderEditorKeep(); };
   $('eAddRt').onclick = () => { d.devices.push({ category: 'Redemption Terminal', type: '', extra: {} }); d.payout_tickets = false; renderEditorKeep(); };
-  const setG = (v) => { d.games_confirmed = v; $('gVal').textContent = v ?? '?'; };
-  $('gMinus').onclick = () => setG(Math.max(0, (d.games_confirmed ?? gameCountOf(d)) - 1));
-  $('gPlus').onclick = () => setG(Math.min(200, (d.games_confirmed ?? gameCountOf(d) - 1) + 1));
-  $('gUnset').onclick = () => setG(null);
+  const setG = (v) => { d.games_confirmed = v; $('gVal').textContent = gamesOf(d); $('gHint').firstChild.textContent = v == null ? 'Automatic — matches the skill games in the equipment list below. ' : 'Set by hand. '; };
+  $('gMinus').onclick = () => setG(Math.max(0, gamesOf(d) - 1));
+  $('gPlus').onclick = () => setG(Math.min(200, gamesOf(d) + 1));
+  $('gAuto').onclick = (e) => { e.preventDefault(); setG(null); };
   $('e_247').onchange = (e) => { d.open_24_7 = e.target.checked; };
   $('e_access').onchange = (e) => { d.access_anytime = e.target.checked; $('accessHow').classList.toggle('hidden', !e.target.checked); };
   $('e_notes').oninput = (e) => { d.notes = e.target.value.slice(0, 250); $('notesCount').textContent = d.notes.length; };
@@ -560,7 +557,7 @@ function convertSource(src) {
       account_manager_phone: clean(r && r.accountManager && r.accountManager.phone),
       hours, hours_comment: comment, open_24_7: SN.is247(comment),
       access_anytime: false, access_method: '', notes: '',
-      games_confirmed: null, ach: null, payout_tickets: hasRt ? false : null,
+      games_confirmed: null, ach: true, payout_tickets: hasRt ? false : null,
       extra: r ? compact({
         accountNumber: r.accountNumber, licenseNumber: r.licenseNumber, ballyId: r.ballyId, legalName: r.legalName,
         customerServiceRep: r.customerServiceRep, primaryCollector: r.primaryCollector, territory: r.territory, region: r.region,
