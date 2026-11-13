@@ -39,10 +39,62 @@ async function loadLocations() {
       if (data.length < 500) break;
     }
     setLocations(all);
+    if (all.length) applyDataFixes();
     if (L_STATE.tab === 'locations') renderLocList();
     if (currentView === 'route') renderRoute();
   })();
   try { await locLoading; } finally { locLoading = null; }
+}
+
+// ======================================================================
+// One-time data fixes. Each runs once per database (a marker goes in the activity log), so later edits
+// by the team are never undone. Changes show up in ⚙︎ Settings → Recent location changes.
+// ======================================================================
+const DATA_FIXES = [
+  {
+    key: 'account-managers-2026-11',
+    // 1) no account manager and no customer service rep → Anthony Bukoskie
+    // 2) Leo Akselrud / Rob Dolrenry → the location's customer service rep, or Anthony Bukoskie if none
+    change(l) {
+      const am = String(l.account_manager || '').trim();
+      const csr = String((l.extra || {}).customerServiceRep || '').trim();
+      const wrong = ['leo akselrud', 'leo askelrud', 'rob dolrenry'].includes(am.toLowerCase());
+      if (wrong && csr) return { account_manager: csr, account_manager_phone: '' };
+      if (wrong || (!am && !csr)) return { account_manager: 'Anthony Bukoskie', account_manager_phone: '(531) 210-7409' };
+      return null;
+    },
+  },
+];
+
+let fixesRunning = false;
+async function applyDataFixes() {
+  if (fixesRunning || !S.session) return;
+  fixesRunning = true;
+  try {
+    for (const fix of DATA_FIXES) {
+      const { data: done, error } = await sb.from('activity').select('id').eq('action', 'data fix').eq('target', fix.key).limit(1);
+      if (error || (done && done.length)) continue;
+      // claim it first so two phones opening at once don't both run it
+      await logActivity('data fix', fix.key, 'started');
+      let changed = 0;
+      for (const l of S.locations) {
+        const patch = fix.change(l);
+        if (!patch) continue;
+        const { error: e } = await sb.from('locations')
+          .update({ ...patch, version: l.version + 1, updated_at: new Date().toISOString() })
+          .eq('id', l.id).eq('version', l.version);
+        if (e) { console.warn(e); continue; }
+        await logActivity('changed account manager at', l.id, `${l.name} — ${String(l.account_manager || '').trim() || '(none)'} → ${patch.account_manager}`);
+        Object.assign(l, patch, { version: l.version + 1 });
+        changed++;
+      }
+      await logActivity('data fix', fix.key, `finished: ${changed} locations updated`);
+      if (changed) {
+        if (L_STATE.tab === 'locations') renderLocList();
+        if (currentView === 'location') renderLocation();
+      }
+    }
+  } finally { fixesRunning = false; }
 }
 
 async function reloadLocation(id) {

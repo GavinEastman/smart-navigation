@@ -75,7 +75,7 @@ It installs from a link on iPhone and Android. There's no App Store and no sign-
 5. After 1–2 minutes your app is at **`https://YOUR-GITHUB-NAME.github.io/smart-navigation/`**.
 
 ### 7. Add your 13 coworkers
-1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.3" line 7 times quickly**. Manage Team opens.
+1. Open the link and sign in with your owner account. Go to **⚙︎ Settings**, scroll to the bottom, and **tap the "Smart Navigation v2.4" line 7 times quickly**. Manage Team opens.
    There's no button for it anywhere. For anyone else, tapping that line does nothing, and the server refuses them too.
 2. For each person, enter their name and email, tap **Generate** for a password, then tap **Create account**. Use **Copy** to send them their login.
 
@@ -102,6 +102,13 @@ It opens full-screen with the Smart Navigation icon, like a regular app.
 1. **Supabase → SQL Editor → New query.** Paste `supabase/004_hours_answer.sql` (two short lines) and click **Run**. Also run `003_start_route.sql` if you never did.
 2. **GitHub → Add file → Upload files.** Upload `index.html`, `app.js`, `locations.js`, `styles.css`, `sw.js`, `README.md`, plus the `anim` folder if you haven't uploaded it since v1.9. Then click **Commit changes**.
 3. Refresh. Settings should say **v2.1**. If My Routes shows an orange **"Database update needed"** box, run the SQL file(s) it names. Your routes are safe; they just can't be started or completed until then.
+
+## Update 2.4 — account managers (automatic)
+Upload `index.html`, `locations.js`, `sw.js` and `README.md` to GitHub. The first time anyone opens v2.4, the app updates account managers **once**:
+- Locations with **no account manager and no customer service rep** → **Anthony Bukoskie, (531) 210-7409**
+- Locations with **Leo Akselrud** or **Rob Dolrenry** → that location's customer service rep, or **Anthony Bukoskie** if it has none
+
+Every change is listed under ⚙︎ Settings → **Recent location changes**. It never runs again, so later edits stay. (`supabase/update_account_managers.sql` does the same thing by hand; there's no need to run it as well.)
 
 ## Good to know
 - **Removing someone** (hidden Manage Team → Remove) takes effect immediately. Their routes are deleted, and the app signs them out the next time it's opened or brought back on screen.
